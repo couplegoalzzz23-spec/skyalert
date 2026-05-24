@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import os
 from io import StringIO, BytesIO
 from PIL import Image
 from datetime import datetime, timezone
@@ -55,17 +56,18 @@ def load_data():
 
 @st.cache_data
 def load_wilayah_data():
-    """Memuat database kode wilayah dari file CSV lokal untuk pencarian dinamis"""
-    try:
-        df_wil = pd.read_csv("kode_wilayah (1).csv", dtype=str)
-        # Normalisasi data
-        df_wil['kode'] = df_wil['kode'].str.strip()
-        df_wil['nama'] = df_wil['nama'].str.strip().str.title()
-        # Buat label dropdown gabungan
-        df_wil['label'] = df_wil['nama'] + " (" + df_wil['kode'] + ")"
-        return df_wil
-    except Exception as e:
-        return None
+    """Memuat database kode wilayah dengan proteksi FileNotFoundError yang ketat"""
+    file_path = "kode_wilayah (1).csv"
+    if os.path.exists(file_path):
+        try:
+            df_wil = pd.read_csv(file_path, dtype=str)
+            df_wil['kode'] = df_wil['kode'].str.strip()
+            df_wil['nama'] = df_wil['nama'].str.strip().str.title()
+            df_wil['label'] = df_wil['nama'] + " (" + df_wil['kode'] + ")"
+            return df_wil
+        except Exception:
+            return pd.DataFrame()
+    return pd.DataFrame() # Kembalikan DataFrame kosong jika file tidak ada di server
 
 df = load_data()
 
@@ -83,7 +85,7 @@ def fetch_metar_taf(icao):
         req_taf = requests.get(f"https://aviationweather.gov/api/data/taf?ids={icao}&format=raw", timeout=5)
         if req_taf.status_code == 200 and req_taf.text.strip():
             data["taf"] = req_taf.text.strip()
-    except Exception as e:
+    except Exception:
         pass
     return data
 
@@ -131,36 +133,21 @@ def get_observation_cycle():
 # METEOROLOGICAL ANALYSIS
 # =====================================================
 def analyze_weather(cape, ki, li, freeze, wind):
-    # Thunderstorm
-    if cape > 2500 or li < -5 or ki >= 40:
-        thunder, t_score = "TINGGI", 3
-    elif cape > 1000 or li < -2 or ki >= 30:
-        thunder, t_score = "SEDANG", 2
-    else:
-        thunder, t_score = "RENDAH", 1
+    if cape > 2500 or li < -5 or ki >= 40: thunder, t_score = "TINGGI", 3
+    elif cape > 1000 or li < -2 or ki >= 30: thunder, t_score = "SEDANG", 2
+    else: thunder, t_score = "RENDAH", 1
 
-    # Turbulence
-    if wind >= 40:
-        turb, turb_score = "TINGGI", 3
-    elif wind >= 25:
-        turb, turb_score = "SEDANG", 2
-    else:
-        turb, turb_score = "RENDAH", 1
+    if wind >= 40: turb, turb_score = "TINGGI", 3
+    elif wind >= 25: turb, turb_score = "SEDANG", 2
+    else: turb, turb_score = "RENDAH", 1
 
-    # Icing
-    if freeze < 12000:
-        ice, ice_score = "TINGGI", 3
-    elif freeze < 16000:
-        ice, ice_score = "SEDANG", 2
-    else:
-        ice, ice_score = "RENDAH", 1
+    if freeze < 12000: ice, ice_score = "TINGGI", 3
+    elif freeze < 16000: ice, ice_score = "SEDANG", 2
+    else: ice, ice_score = "RENDAH", 1
 
     total_score = t_score + turb_score + ice_score
-    if total_score >= 7 or t_score == 3:
-        return "AWAS", "alert-awas", thunder, turb, ice
-    elif total_score >= 5:
-        return "SIAGA", "alert-siaga", thunder, turb, ice
-    
+    if total_score >= 7 or t_score == 3: return "AWAS", "alert-awas", thunder, turb, ice
+    elif total_score >= 5: return "SIAGA", "alert-siaga", thunder, turb, ice
     return "NORMAL", "alert-normal", thunder, turb, ice
 
 # =====================================================
@@ -169,7 +156,6 @@ def analyze_weather(cape, ki, li, freeze, wind):
 st.title("✈️ SKYALERT TNI AU")
 st.caption("Tactical Aviation Weather & Upper Air Monitoring | Sistem Pendukung Keputusan Operasional")
 
-# Pilihan Stasiun Utama
 c_sel1, c_sel2 = st.columns([1, 2])
 with c_sel1:
     station = st.selectbox("Pilih Lanud / Stasiun Observasi", df["name"])
@@ -177,7 +163,6 @@ with c_sel1:
 row = df[df["name"] == station].iloc[0]
 status, color, thunder, turbulence, icing = analyze_weather(row["cape"], row["ki"], row["li"], row["freeze"], row["wind"])
 
-# Status Utama
 st.markdown(
     f"""
     <div class="{color}">
@@ -188,7 +173,6 @@ st.markdown(
 )
 st.write("---")
 
-# Data Aktual & Observasi
 st.subheader(f"📡 Real-time Surface Observation ({row['icao']})")
 aviation_data = fetch_metar_taf(row["icao"])
 col_metar, col_taf = st.columns(2)
@@ -206,29 +190,31 @@ st.write("---")
 st.subheader("🌤️ Prakiraan Cuaca Publik BMKG (Presisi Wilayah)")
 
 df_wilayah = load_wilayah_data()
+default_adm4 = str(row.get("adm4", "31.71.03.1001"))
 
-if df_wilayah is not None and not df_wilayah.empty:
-    st.caption("Gunakan menu dropdown di bawah ini untuk mencari Desa/Kecamatan spesifik agar data prakiraan lebih tepat sasaran. Anda bisa mengetikkan nama wilayahnya.")
-    
-    # Set default ke kode adm4 milik Lanud yang dipilih
-    default_adm4 = str(row.get("adm4", "31.71.03.1001"))
+c_cari1, c_cari2 = st.columns([2, 1])
+
+# Jika file CSV ditemukan, tampilkan dropdown lengkap
+if not df_wilayah.empty:
     try:
         default_index = df_wilayah.index[df_wilayah['kode'] == default_adm4].tolist()[0]
     except IndexError:
         default_index = 0
         
-    c_cari1, c_cari2 = st.columns([2, 1])
     with c_cari1:
-        # Menampilkan Selectbox pencarian
-        selected_label = st.selectbox("🔍 Cari Wilayah:", df_wilayah['label'], index=default_index)
-    
-    # Ekstrak kode adm4 saja dari teks label
+        selected_label = st.selectbox("📍 Pilih Wilayah Prakiraan BMKG:", df_wilayah['label'], index=default_index)
     selected_adm4 = selected_label.split("(")[-1].replace(")", "").strip()
-else:
-    st.warning("⚠️ File 'kode_wilayah (1).csv' tidak ditemukan di direktori. Menggunakan lokasi default Lanud.")
-    selected_adm4 = row.get("adm4", "31.71.03.1001")
 
-# Fetch data BMKG berdasarkan kode yang dipilih
+# Jika file CSV tidak ada di server, otomatis munculkan pilihan Lanud saja (anti-crash)
+else:
+    df['label_lanud'] = df['name'] + " (" + df['adm4'] + ")"
+    default_index = df.index[df['name'] == station].tolist()[0]
+    
+    with c_cari1:
+        selected_label = st.selectbox("📍 Pilih Wilayah Prakiraan BMKG:", df['label_lanud'], index=default_index)
+    selected_adm4 = selected_label.split("(")[-1].replace(")", "").strip()
+
+# Ambil data BMKG
 bmkg_data = fetch_bmkg_public_weather(selected_adm4)
 
 if bmkg_data and "data" in bmkg_data and bmkg_data["data"]:
@@ -279,7 +265,6 @@ h1.markdown(f"<div class='block'><h3>⛈️ Thunderstorm</h3><h1>{thunder}</h1><
 h2.markdown(f"<div class='block'><h3>🌪️ Turbulence</h3><h1>{turbulence}</h1></div>", unsafe_allow_html=True)
 h3.markdown(f"<div class='block'><h3>❄️ Icing</h3><h1>{icing}</h1></div>", unsafe_allow_html=True)
 
-# Interpretasi & Rekomendasi
 st.info(f"""
 ### 💡 Interpretasi Taktis
 Data observasi menunjukkan kondisi konveksi **{thunder.lower()}**. Nilai CAPE ({row['cape']} J/kg) dan LI ({row['li']}) mengindikasikan tingkat labilitas udara saat ini. K-Index ({row['ki']}) merepresentasikan probabilitas pertumbuhan awan Cumulonimbus (CB). Kecepatan angin atas ({row['wind']} kt) memicu potensi turbulensi **{turbulence.lower()}**. Waspadai freezing level pada ketinggian {row['freeze']} ft untuk risiko icing **{icing.lower()}**.
