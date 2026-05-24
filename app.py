@@ -1,21 +1,22 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime, timezone, timedelta
+import pydeck as pdk
+from io import StringIO
 
-# =====================================================
+# =========================================================
 # PAGE
-# =====================================================
+# =========================================================
 
 st.set_page_config(
-    page_title="SKYALERT",
+    page_title="SKYALERT TNI AU",
     page_icon="✈️",
     layout="wide"
 )
 
-# =====================================================
+# =========================================================
 # CSS
-# =====================================================
+# =========================================================
 
 st.markdown("""
 <style>
@@ -25,311 +26,152 @@ st.markdown("""
     color:white;
 }
 
-.alert-green{
-    background:#0d402c;
+.block{
+    background:#112233;
     padding:15px;
-    border-radius:12px;
-    font-size:20px;
-    font-weight:bold;
-}
-
-.alert-yellow{
-    background:#5c4c00;
-    padding:15px;
-    border-radius:12px;
-    font-size:20px;
-    font-weight:bold;
-}
-
-.alert-red{
-    background:#5d1717;
-    padding:15px;
-    border-radius:12px;
-    font-size:20px;
-    font-weight:bold;
-}
-
-.briefing{
-    background:#132433;
-    padding:18px;
     border-radius:12px;
 }
 
 </style>
 """, unsafe_allow_html=True)
 
-# =====================================================
-# STATION DATA
-# =====================================================
+# =========================================================
+# CSV VALID BMKG RASON
+# ICAO + WMO + LAT LON
+# =========================================================
 
-stations = [
+CSV_DATA = """
+icao,wmo,name,lat,lon
+WITT,96001,Sultan Iskandar Muda,5.523,-95.420
+WIMM,96035,Kualanamu,3.642,98.885
+WIBB,96109,Sultan Syarif Kasim II,0.460,101.445
+WIKK,96237,Depati Amir,-2.162,106.139
+WIPP,96295,Sultan Mahmud Badaruddin II,-2.898,104.699
+WIII,96749,Soekarno-Hatta,-6.125,106.655
+WICC,96783,Husein Sastranegara,-6.900,107.575
+WAHI,96747,Yogyakarta Intl,-7.905,110.057
+WARR,96933,Juanda,-7.379,112.787
+WADD,97230,I Gusti Ngurah Rai,-8.748,115.167
+WAAA,97180,Sultan Hasanuddin,-5.061,119.554
+WAMM,97014,Sam Ratulangi,1.549,124.926
+WAPP,97724,Pattimura,-3.710,128.089
+WAJJ,97690,Sentani,-2.576,140.516
+"""
 
-    {
-        "icao":"WIBB",
-        "wmo":"96109",
-        "name":"Sultan Syarif Kasim II",
-        "lanud":"Pekanbaru",
+df = pd.read_csv(StringIO(CSV_DATA))
 
-        # valid screenshot BMKG
-        "cape":41,
-        "ki":36.9,
-        "li":0.1,
-        "freeze":16162,
-        "wind":28
-    },
-
-    {
-        "icao":"WIII",
-        "wmo":"96749",
-        "name":"Soekarno-Hatta",
-        "lanud":"Jakarta",
-        "cape":120,
-        "ki":31,
-        "li":-1,
-        "freeze":17000,
-        "wind":22
-    },
-
-    {
-        "icao":"WARR",
-        "wmo":"96933",
-        "name":"Juanda",
-        "lanud":"Surabaya",
-        "cape":800,
-        "ki":38,
-        "li":-3,
-        "freeze":17500,
-        "wind":35
-    }
-]
-
-df = pd.DataFrame(stations)
-
-# =====================================================
+# =========================================================
 # BMKG IMAGE
-# =====================================================
+# =========================================================
 
-def get_raob_url(wmo):
+def get_image(wmo):
 
     urls = [
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.PNG",
-        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.png",
+        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.png"
     ]
 
     for url in urls:
         try:
             r = requests.get(url, timeout=8)
+
             if r.status_code == 200:
                 return url
+
         except:
             pass
 
     return None
 
-# =====================================================
-# ANALYSIS
-# =====================================================
+# =========================================================
+# MAP
+# =========================================================
 
-def thunderstorm_risk(cape, ki, li):
-
-    score = 0
-
-    if cape > 500:
-        score += 2
-
-    elif cape > 100:
-        score += 1
-
-    if ki >= 35:
-        score += 2
-
-    elif ki >= 30:
-        score += 1
-
-    if li < -2:
-        score += 2
-
-    elif li < 0:
-        score += 1
-
-    if score <= 2:
-        return "LOW"
-
-    elif score <= 4:
-        return "MODERATE"
-
-    return "HIGH"
-
-
-def icing_risk(freeze):
-
-    if freeze < 15000:
-        return "HIGH"
-
-    elif freeze < 18000:
-        return "MODERATE"
-
-    return "LOW"
-
-
-def turbulence_risk(wind):
-
-    if wind >= 35:
-        return "HIGH"
-
-    elif wind >= 20:
-        return "MODERATE"
-
-    return "LOW"
-
-
-def flight_status(ts, icing, turb):
-
-    levels = [ts, icing, turb]
-
-    if "HIGH" in levels:
-        return "WARNING"
-
-    elif "MODERATE" in levels:
-        return "CAUTION"
-
-    return "NORMAL"
-
-# =====================================================
-# HEADER
-# =====================================================
-
-st.title("✈️ SKYALERT")
+st.title("✈️ SKYALERT TNI AU")
 st.caption(
-    "Aviation Upper Air Early Warning Dashboard | TNI AU"
+    "Upper Air Radiosonde Monitoring Indonesia | BMKG Aviation"
 )
 
-# =====================================================
-# SIDEBAR
-# =====================================================
+st.subheader("Peta Radiosonde Indonesia")
 
-selected = st.sidebar.selectbox(
+layer = pdk.Layer(
+    "ScatterplotLayer",
+    data=df,
+    get_position='[lon, lat]',
+    get_radius=30000,
+    pickable=True
+)
+
+view = pdk.ViewState(
+    latitude=-2,
+    longitude=118,
+    zoom=4
+)
+
+st.pydeck_chart(
+    pdk.Deck(
+        layers=[layer],
+        initial_view_state=view,
+        tooltip={
+            "text":"{icao}\n{name}"
+        }
+    )
+)
+
+# =========================================================
+# SELECT
+# =========================================================
+
+selected = st.selectbox(
     "Pilih Stasiun Radiosonde",
     df["name"]
 )
 
 row = df[df["name"] == selected].iloc[0]
 
-# =====================================================
-# VALUES
-# =====================================================
+icao = row["icao"]
+wmo = row["wmo"]
 
-cape = row["cape"]
-ki = row["ki"]
-li = row["li"]
-freeze = row["freeze"]
-wind = row["wind"]
+# =========================================================
+# INFO
+# =========================================================
 
-ts = thunderstorm_risk(cape, ki, li)
-ice = icing_risk(freeze)
-turb = turbulence_risk(wind)
+a,b,c,d = st.columns(4)
 
-status = flight_status(ts, ice, turb)
+a.metric("ICAO", icao)
+b.metric("WMO", wmo)
+c.metric("Lat", row["lat"])
+d.metric("Lon", row["lon"])
 
-# =====================================================
-# MAIN ALARM
-# =====================================================
-
-if status == "NORMAL":
-    st.markdown(
-        '<div class="alert-green">🟢 FLIGHT STATUS NORMAL — aman untuk operasi penerbangan</div>',
-        unsafe_allow_html=True
-    )
-
-elif status == "CAUTION":
-    st.markdown(
-        '<div class="alert-yellow">🟡 FLIGHT STATUS CAUTION — perlu kewaspadaan penerbangan</div>',
-        unsafe_allow_html=True
-    )
-
-else:
-    st.markdown(
-        '<div class="alert-red">🔴 FLIGHT STATUS WARNING — hazard signifikan terdeteksi</div>',
-        unsafe_allow_html=True
-    )
-
-# =====================================================
-# METRICS
-# =====================================================
-
-a,b,c,d,e = st.columns(5)
-
-a.metric("CAPE", f"{cape} J/kg")
-b.metric("KI", ki)
-c.metric("LI", li)
-d.metric("Freezing", f"{freeze} ft")
-e.metric("Wind", f"{wind} kt")
-
-# =====================================================
-# RISK
-# =====================================================
-
-x,y,z = st.columns(3)
-
-x.metric("Thunderstorm Risk", ts)
-y.metric("Icing Risk", ice)
-z.metric("Turbulence Risk", turb)
-
-# =====================================================
-# BRIEFING
-# =====================================================
-
-st.subheader("Pilot Briefing Summary")
-
-brief = f"""
-
-Station : {row['name']} ({row['icao']})
-
-• Thunderstorm : {ts}
-
-• Icing : {ice}
-
-• Turbulence : {turb}
-
-• Operational Status : {status}
-
-Kesimpulan:
-
-Atmosfer menunjukkan potensi konveksi {ts.lower()}.
-Risiko icing berada pada kategori {ice.lower()}.
-Potensi turbulensi {turb.lower()}.
-
-Rekomendasi:
-Laksanakan monitoring lanjutan sebelum departure / training flight.
-"""
-
-st.markdown(
-    f'<div class="briefing">{brief}</div>',
-    unsafe_allow_html=True
-)
-
-# =====================================================
-# IMAGE
-# =====================================================
+# =========================================================
+# BMKG
+# =========================================================
 
 st.subheader("Latest Radiosonde BMKG")
 
-img = get_raob_url(row["wmo"])
+img = get_image(wmo)
 
 if img:
+
     st.image(
         img,
         use_container_width=True
     )
+
 else:
-    st.info(
-        "Gambar radiosonde BMKG belum tersedia."
+
+    st.warning(
+        "Data/gambar radiosonde BMKG belum tersedia saat ini."
     )
 
-# =====================================================
-# FOOTER
-# =====================================================
+# =========================================================
+# LINK
+# =========================================================
 
 st.caption(
-    "SKYALERT | BMKG Upper Air + Aviation Hazard Decision Support"
+    "BMKG Monitoring Rason Indonesia"
+)
+
+st.markdown(
+    "[Buka halaman resmi BMKG Aviation](https://aviation.bmkg.go.id/monitoring_rason/index)"
 )
