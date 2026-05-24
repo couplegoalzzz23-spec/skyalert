@@ -29,9 +29,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =====================================================
-# STATION DATA (DIPERBARUI DENGAN KODE ADM4 WILAYAH)
+# STATION DATA & KODE WILAYAH LOADER
 # =====================================================
-# Menambahkan kolom adm4 agar data API Cuaca Publik sinkron dengan Lanud
 CSV_DATA = """
 icao,wmo,name,lat,lon,cape,ki,li,freeze,wind,adm4
 WITT,96001,Sultan Iskandar Muda,5.523,95.420,850,37,-3,16000,35,11.71.02.2001
@@ -49,16 +48,31 @@ WAMM,97014,Sam Ratulangi,1.549,124.926,400,33,-1,18000,26,71.71.04.1001
 WAPP,97724,Pattimura,-3.710,128.089,680,35,-2,17000,30,81.71.02.1001
 WAJJ,97690,Sentani,-2.576,140.516,1100,39,-4,14500,42,91.03.01.2001
 """
+
 @st.cache_data
 def load_data():
     return pd.read_csv(StringIO(CSV_DATA.strip()))
 
+@st.cache_data
+def load_wilayah_data():
+    """Memuat database kode wilayah dari file CSV lokal untuk pencarian dinamis"""
+    try:
+        df_wil = pd.read_csv("kode_wilayah (1).csv", dtype=str)
+        # Normalisasi data
+        df_wil['kode'] = df_wil['kode'].str.strip()
+        df_wil['nama'] = df_wil['nama'].str.strip().str.title()
+        # Buat label dropdown gabungan
+        df_wil['label'] = df_wil['nama'] + " (" + df_wil['kode'] + ")"
+        return df_wil
+    except Exception as e:
+        return None
+
 df = load_data()
 
 # =====================================================
-# REAL-TIME DATA FETCHERS (DENGAN CACHING)
+# REAL-TIME DATA FETCHERS
 # =====================================================
-@st.cache_data(ttl=300) # Cache 5 menit agar tidak kena limit API
+@st.cache_data(ttl=300)
 def fetch_metar_taf(icao):
     data = {"metar": "Data tidak tersedia", "taf": "Data tidak tersedia"}
     try:
@@ -70,16 +84,13 @@ def fetch_metar_taf(icao):
         if req_taf.status_code == 200 and req_taf.text.strip():
             data["taf"] = req_taf.text.strip()
     except Exception as e:
-        st.toast(f"Gagal mengambil METAR/TAF: {e}")
+        pass
     return data
 
-@st.cache_data(ttl=600) # Cache 10 menit
+@st.cache_data(ttl=600)
 def fetch_bmkg_public_weather(adm4_code):
-    """Mengambil prakiraan cuaca dinamis berdasarkan kode wilayah (adm4) Lanud"""
-    # Fallback ke Jakarta jika adm4 kosong/tidak valid
-    if pd.isna(adm4_code) or not str(adm4_code).strip():
+    if not str(adm4_code).strip():
         adm4_code = "31.71.03.1001" 
-        
     url = f"https://api.bmkg.go.id/publik/prakiraan-cuaca?adm4={str(adm4_code).strip()}"
     try:
         response = requests.get(url, timeout=8)
@@ -158,7 +169,7 @@ def analyze_weather(cape, ki, li, freeze, wind):
 st.title("✈️ SKYALERT TNI AU")
 st.caption("Tactical Aviation Weather & Upper Air Monitoring | Sistem Pendukung Keputusan Operasional")
 
-# Pilihan Stasiun
+# Pilihan Stasiun Utama
 c_sel1, c_sel2 = st.columns([1, 2])
 with c_sel1:
     station = st.selectbox("Pilih Lanud / Stasiun Observasi", df["name"])
@@ -188,15 +199,42 @@ with col_taf:
     st.markdown("**TAF (Prakiraan):**")
     st.markdown(f"<div class='metar-text'>{aviation_data['taf']}</div>", unsafe_allow_html=True)
 
-# Integrasi API Publik BMKG (Dinamis berdasarkan Lokasi)
+# =====================================================
+# INTEGRASI API PUBLIK BMKG (PENCARIAN PRESISI)
+# =====================================================
 st.write("---")
-st.subheader(f"🌤️ Prakiraan Cuaca Publik BMKG (Area {row['name']})")
-bmkg_data = fetch_bmkg_public_weather(row.get("adm4", ""))
+st.subheader("🌤️ Prakiraan Cuaca Publik BMKG (Presisi Wilayah)")
+
+df_wilayah = load_wilayah_data()
+
+if df_wilayah is not None and not df_wilayah.empty:
+    st.caption("Gunakan menu dropdown di bawah ini untuk mencari Desa/Kecamatan spesifik agar data prakiraan lebih tepat sasaran. Anda bisa mengetikkan nama wilayahnya.")
+    
+    # Set default ke kode adm4 milik Lanud yang dipilih
+    default_adm4 = str(row.get("adm4", "31.71.03.1001"))
+    try:
+        default_index = df_wilayah.index[df_wilayah['kode'] == default_adm4].tolist()[0]
+    except IndexError:
+        default_index = 0
+        
+    c_cari1, c_cari2 = st.columns([2, 1])
+    with c_cari1:
+        # Menampilkan Selectbox pencarian
+        selected_label = st.selectbox("🔍 Cari Wilayah:", df_wilayah['label'], index=default_index)
+    
+    # Ekstrak kode adm4 saja dari teks label
+    selected_adm4 = selected_label.split("(")[-1].replace(")", "").strip()
+else:
+    st.warning("⚠️ File 'kode_wilayah (1).csv' tidak ditemukan di direktori. Menggunakan lokasi default Lanud.")
+    selected_adm4 = row.get("adm4", "31.71.03.1001")
+
+# Fetch data BMKG berdasarkan kode yang dipilih
+bmkg_data = fetch_bmkg_public_weather(selected_adm4)
 
 if bmkg_data and "data" in bmkg_data and bmkg_data["data"]:
     lokasi = bmkg_data["data"][0].get("lokasi", {})
-    nama_daerah = f"{lokasi.get('desa', '')}, Kec. {lokasi.get('kecamatan', '')}, {lokasi.get('kota', '')}"
-    st.caption(f"📍 Sumber Koordinat API: {nama_daerah}")
+    nama_daerah = f"{lokasi.get('desa', '')}, Kec. {lokasi.get('kecamatan', '')}, {lokasi.get('kota', '')}, {lokasi.get('provinsi', '')}"
+    st.markdown(f"**📍 Lokasi Terbaca oleh API:** `{nama_daerah}`")
     
     cuaca_list = bmkg_data["data"][0].get("cuaca", [])
     if cuaca_list and cuaca_list[0]:
@@ -222,9 +260,11 @@ if bmkg_data and "data" in bmkg_data and bmkg_data["data"]:
                 </div>
                 """, unsafe_allow_html=True)
 else:
-    st.warning("⚠️ Data prakiraan cuaca publik BMKG tidak dapat ditarik atau struktur API berubah.")
+    st.error("⚠️ Data prakiraan cuaca tidak tersedia untuk kode wilayah yang dipilih, atau server BMKG sedang sibuk.")
 
-# Upper Air Analysis
+# =====================================================
+# UPPER AIR ANALYSIS
+# =====================================================
 st.write("---")
 st.subheader("☁️ Analisis Stabilitas Atmosfer (Radiosonde)")
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -245,13 +285,17 @@ st.info(f"""
 Data observasi menunjukkan kondisi konveksi **{thunder.lower()}**. Nilai CAPE ({row['cape']} J/kg) dan LI ({row['li']}) mengindikasikan tingkat labilitas udara saat ini. K-Index ({row['ki']}) merepresentasikan probabilitas pertumbuhan awan Cumulonimbus (CB). Kecepatan angin atas ({row['wind']} kt) memicu potensi turbulensi **{turbulence.lower()}**. Waspadai freezing level pada ketinggian {row['freeze']} ft untuk risiko icing **{icing.lower()}**.
 """)
 
-# Radar Interaktif
+# =====================================================
+# RADAR & SATELLITE
+# =====================================================
 st.write("---")
 st.subheader("🛰️ Tactical Weather Radar")
 iframe_url = f"https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=default&metricWind=kt&zoom=8&overlay=radar&product=radar&level=surface&lat={row['lat']}&lon={row['lon']}"
 components.iframe(iframe_url, height=500)
 
-# Skew-T
+# =====================================================
+# SKEW-T IMAGE
+# =====================================================
 st.write("---")
 st.subheader("📈 Profil Radiosonde (Skew-T Log-P)")
 img, img_timestamp = fetch_image(row["wmo"])
@@ -262,4 +306,4 @@ else:
     st.warning("⚠️ BMKG belum mempublikasikan visualisasi sounding terbaru untuk stasiun ini atau server sedang down.")
 
 st.write("---")
-st.caption("SKYALERT | Integrasi API Aviation Weather Center & BMKG Upper Air | Sistem Pendukung Keputusan Taktis")
+st.caption("SKYALERT | Integrasi API Aviation Weather Center & BMKG | Sistem Pendukung Keputusan Taktis")
