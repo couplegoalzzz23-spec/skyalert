@@ -1,4 +1,6 @@
 streamlit
 pandas
 requests
-pydeck
+streamlit-folium
+folium
+Pillow
