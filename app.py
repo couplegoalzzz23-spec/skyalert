@@ -7,9 +7,15 @@ from io import StringIO, BytesIO
 from PIL import Image
 from datetime import datetime, timezone
 import streamlit.components.v1 as components
-from fpdf import FPDF
 import tempfile
 import os
+
+# Memastikan aplikasi tidak crash jika library fpdf belum terinstal
+try:
+    from fpdf import FPDF
+    FPDF_AVAILABLE = True
+except ImportError:
+    FPDF_AVAILABLE = False
 
 # =====================================================
 # CONFIG
@@ -62,7 +68,6 @@ df = pd.read_csv(StringIO(CSV_DATA))
 # REAL-TIME DATA FETCHERS
 # =====================================================
 def fetch_metar_taf(icao):
-    """Mengambil data METAR dan TAF secara real-time dari Aviation Weather Center API"""
     data = {"metar": "Data tidak tersedia", "taf": "Data tidak tersedia"}
     try:
         metar_url = f"https://aviationweather.gov/api/data/metar?ids={icao}&format=raw"
@@ -80,7 +85,6 @@ def fetch_metar_taf(icao):
     return data
 
 def get_observation_cycle():
-    """Menentukan cycle observasi Radiosonde (00Z atau 12Z) menggunakan module bawaan"""
     now_utc = datetime.now(timezone.utc)
     if now_utc.hour >= 12:
         cycle = f"{now_utc.strftime('%Y-%m-%d')} 12:00 UTC"
@@ -89,7 +93,6 @@ def get_observation_cycle():
     return cycle
 
 def fetch_image(wmo):
-    """Menarik gambar Skew-T BMKG beserta timestamp dari HTTP header"""
     urls = [
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.PNG",
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.png",
@@ -104,7 +107,6 @@ def fetch_image(wmo):
             if r.status_code == 200 and len(r.content) > 1000:
                 if 'Last-Modified' in r.headers:
                     timestamp = r.headers['Last-Modified']
-                
                 try:
                     img = Image.open(BytesIO(r.content))
                     return img, timestamp
@@ -170,33 +172,33 @@ def analyze_weather(cape, ki, li, freeze, wind):
 # PDF GENERATOR
 # =====================================================
 def create_pdf_release(station, cycle_time, status, thunder, cape, li, ki, wind, turbulence, freeze, icing):
+    if not FPDF_AVAILABLE:
+        return None
+        
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 
-    # Title
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(200, 10, txt="PRESS RELEASE: TAKTIS CUACA PENERBANGAN", ln=True, align='C')
     pdf.set_font("Arial", size=10)
-    pdf.cell(200, 10, txt="Sistem Pendukung Keputusan Operasional - SKYALERT TNI AU", ln=True, align='C')
+    pdf.cell(200, 10, txt="Sistem Pendukung Keputusan Operasional - SKYALERT", ln=True, align='C')
     pdf.ln(5)
 
-    # Header info
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(200, 10, txt=f"Lokasi: {station}", ln=True)
-    pdf.cell(200, 10, txt=f"Siklus: {cycle_time}", ln=True)
+    pdf.cell(200, 10, txt=f"Siklus Data: {cycle_time}", ln=True)
     pdf.cell(200, 10, txt=f"Status Operasi: {status}", ln=True)
     pdf.ln(5)
 
-    # Content
     pdf.set_font("Arial", size=12)
     content = (
         f"Berdasarkan data observasi permukaan dan profil atmosfer atas terkini, kondisi konvektif saat ini terpantau {thunder.lower()}.\n\n"
-        f"1. Termodinamika: Nilai CAPE tercatat {cape} J/kg dan Lifted Index (LI) {li}, yang mengindikasikan tingkat labilitas udara di wilayah tersebut. "
-        f"K-Index berada di angka {ki}, yang merepresentasikan probabilitas pertumbuhan awan Cumulonimbus (CB) di sekitar aerodrome.\n\n"
+        f"1. Termodinamika: Nilai CAPE tercatat {cape} J/kg dan Lifted Index (LI) {li}, mengindikasikan tingkat labilitas udara di wilayah tersebut. "
+        f"K-Index berada di angka {ki}, merepresentasikan probabilitas pertumbuhan awan Cumulonimbus (CB) di sekitar aerodrome.\n\n"
         f"2. Angin & Temperatur: Kecepatan angin di lapisan atas terpantau pada {wind} kt, memicu potensi turbulensi tingkat {turbulence.lower()}. "
         f"Waspadai level pembekuan pada ketinggian {freeze} ft yang membawa risiko icing tingkat {icing.lower()} pada armada udara.\n\n"
-        f"Rekomendasi Operasional Militer:\n"
+        f"Rekomendasi Operasional:\n"
         f"- Sinkronkan prakiraan TAF terbaru dengan pantauan radar cuaca secara berkala.\n"
         f"- Hindari area dengan sel konvektif aktif jika nilai CAPE > 1500 J/kg, terutama pada fase approach dan climb.\n"
         f"- Sampaikan risiko Icing ({icing}) dan Turbulensi ({turbulence}) secara eksplisit kepada aircrew sebelum take-off."
@@ -204,13 +206,12 @@ def create_pdf_release(station, cycle_time, status, thunder, cape, li, ki, wind,
 
     pdf.multi_cell(0, 8, txt=content)
 
-    # Output to TempFile to ensure smooth bytes extraction
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         pdf.output(tmp.name)
         with open(tmp.name, "rb") as f:
             pdf_bytes = f.read()
     
-    os.remove(tmp.name) # Clean up temp file
+    os.remove(tmp.name)
     return pdf_bytes
 
 # =====================================================
@@ -221,22 +222,19 @@ with st.sidebar:
     st.caption("Tactical Aviation Weather & Upper Air Monitoring")
     st.write("---")
     
-    # Select Station moved to Sidebar
     station = st.selectbox("Pilih Lanud / Stasiun Observasi", df["name"])
     
     st.write("---")
-    st.info("Sistem Pendukung Keputusan Operasional TNI AU terintegrasi dengan API Aviation Weather Center & BMKG Upper Air.")
+    st.info("Sistem Pendukung Keputusan Operasional terintegrasi dengan API Aviation Weather Center & BMKG Upper Air.")
 
 # =====================================================
-# MAIN HEADER
+# MAIN HEADER & DATA PROCESSING
 # =====================================================
 st.header(f"Analisis Cuaca Taktis: {station}")
 
-# Get Station Data
 row = df[df["name"] == station].iloc[0]
 icao_code = row["icao"]
 
-# Fetch Real-time data
 aviation_data = fetch_metar_taf(icao_code)
 cycle_time = get_observation_cycle()
 status, color, thunder, turbulence, icing = analyze_weather(row["cape"], row["ki"], row["li"], row["freeze"], row["wind"])
@@ -292,7 +290,7 @@ with h3:
     st.markdown(f"<div class='block'><h3>❄️ Icing</h3><h1>{icing}</h1></div>", unsafe_allow_html=True)
 
 # =====================================================
-# INTERPRETATION & RECOMMENDATION (PRESS RELEASE)
+# INTERPRETATION & PRESS RELEASE DOWNLOAD
 # =====================================================
 summary = f"""
 ### 💡 Interpretasi Taktis
@@ -307,20 +305,21 @@ Data observasi permukaan (METAR) dan profil atmosfer atas menunjukkan kondisi ko
 """
 st.info(summary)
 
-# Generate PDF based on conditions
-pdf_data = create_pdf_release(
-    station=row["name"], cycle_time=cycle_time, status=status,
-    thunder=thunder, cape=row['cape'], li=row['li'], ki=row['ki'],
-    wind=row['wind'], turbulence=turbulence, freeze=row['freeze'], icing=icing
-)
-
-# Download Button
-st.download_button(
-    label="📥 Unduh Press Release (PDF)",
-    data=pdf_data,
-    file_name=f"Press_Release_Cuaca_{icao_code}_{datetime.now().strftime('%Y%m%d')}.pdf",
-    mime="application/pdf"
-)
+if FPDF_AVAILABLE:
+    pdf_data = create_pdf_release(
+        station=row["name"], cycle_time=cycle_time, status=status,
+        thunder=thunder, cape=row['cape'], li=row['li'], ki=row['ki'],
+        wind=row['wind'], turbulence=turbulence, freeze=row['freeze'], icing=icing
+    )
+    if pdf_data:
+        st.download_button(
+            label="📥 Unduh Press Release (PDF)",
+            data=pdf_data,
+            file_name=f"Press_Release_Cuaca_{icao_code}_{datetime.now().strftime('%Y%m%d')}.pdf",
+            mime="application/pdf"
+        )
+else:
+    st.warning("⚠️ Fitur unduh PDF dinonaktifkan sementara karena sistem membutuhkan instalasi tambahan. (Silakan tambahkan 'fpdf' pada environment atau file requirements.txt Anda nantinya).")
 
 # =====================================================
 # RADAR & SATELLITE INTEGRATION (TABS)
