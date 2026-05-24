@@ -5,17 +5,8 @@ import folium
 from streamlit_folium import st_folium
 from io import StringIO, BytesIO
 from PIL import Image
-from datetime import datetime, timezone
+from datetime import datetime, timezone # Menggunakan timezone bawaan Python, bukan pytz
 import streamlit.components.v1 as components
-import tempfile
-import os
-
-# Memastikan aplikasi tidak crash jika library fpdf belum terinstal
-try:
-    from fpdf import FPDF
-    FPDF_AVAILABLE = True
-except ImportError:
-    FPDF_AVAILABLE = False
 
 # =====================================================
 # CONFIG
@@ -68,6 +59,7 @@ df = pd.read_csv(StringIO(CSV_DATA))
 # REAL-TIME DATA FETCHERS
 # =====================================================
 def fetch_metar_taf(icao):
+    """Mengambil data METAR dan TAF secara real-time dari Aviation Weather Center API"""
     data = {"metar": "Data tidak tersedia", "taf": "Data tidak tersedia"}
     try:
         metar_url = f"https://aviationweather.gov/api/data/metar?ids={icao}&format=raw"
@@ -85,7 +77,8 @@ def fetch_metar_taf(icao):
     return data
 
 def get_observation_cycle():
-    now_utc = datetime.now(timezone.utc)
+    """Menentukan cycle observasi Radiosonde (00Z atau 12Z) menggunakan module bawaan"""
+    now_utc = datetime.now(timezone.utc) # Perbaikan di baris ini
     if now_utc.hour >= 12:
         cycle = f"{now_utc.strftime('%Y-%m-%d')} 12:00 UTC"
     else:
@@ -93,6 +86,7 @@ def get_observation_cycle():
     return cycle
 
 def fetch_image(wmo):
+    """Menarik gambar Skew-T BMKG beserta timestamp dari HTTP header"""
     urls = [
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.PNG",
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.png",
@@ -107,6 +101,7 @@ def fetch_image(wmo):
             if r.status_code == 200 and len(r.content) > 1000:
                 if 'Last-Modified' in r.headers:
                     timestamp = r.headers['Last-Modified']
+                
                 try:
                     img = Image.open(BytesIO(r.content))
                     return img, timestamp
@@ -169,28 +164,143 @@ def analyze_weather(cape, ki, li, freeze, wind):
     return status, color, thunder, turbulence, icing
 
 # =====================================================
-# HIMAWARI DYNAMIC INTERPRETATION
+# HEADER & UI
 # =====================================================
-def get_himawari_interpretation(thunder_status):
-    """Menghasilkan interpretasi satelit Himawari-9 selaras dengan analisis stabilitas atmosfer"""
-    if thunder_status == "TINGGI":
-        return "Satelit Himawari mengindikasikan pertumbuhan awan konvektif dalam (deep convection) dengan suhu puncak awan signifikan (< -70°C). Terdapat indikasi kuat pembentukan sel Cumulonimbus (CB) aktif di sekitar wilayah aerodrome."
-    elif thunder_status == "SEDANG":
-        return "Satelit Himawari menunjukkan formasi awan menengah-tinggi dengan suhu puncak awan moderat (-40°C hingga -60°C). Aktivitas konvektif terpantau berkembang dan memerlukan pemantauan lanjutan."
-    else:
-        return "Satelit Himawari terpantau relatif aman dari sel konvektif aktif berskala luas. Tutupan awan didominasi awan tipis/rendah yang secara umum tidak signifikan mengganggu jarak pandang vertikal."
+st.title("✈️ SKYALERT TNI AU")
+st.caption("Tactical Aviation Weather & Upper Air Monitoring | Sistem Pendukung Keputusan Operasional")
 
 # =====================================================
-# PDF GENERATOR
+# SELECT STATION & REAL-TIME FETCH
 # =====================================================
-def create_pdf_release(station, cycle_time, status, thunder, cape, li, ki, wind, turbulence, freeze, icing, himawari_text):
-    if not FPDF_AVAILABLE:
-        return None
-        
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
+c_sel1, c_sel2 = st.columns([1, 2])
+with c_sel1:
+    station = st.selectbox("Pilih Lanud / Stasiun Observasi", df["name"])
 
-    # Header
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 1
+row = df[df["name"] == station].iloc[0]
+icao_code = row["icao"]
+
+# Fetch Real-time data
+aviation_data = fetch_metar_taf(icao_code)
+cycle_time = get_observation_cycle()
+status, color, thunder, turbulence, icing = analyze_weather(row["cape"], row["ki"], row["li"], row["freeze"], row["wind"])
+
+# =====================================================
+# MAIN ALERT
+# =====================================================
+st.markdown(
+    f"""
+    <div class="{color}">
+    STATUS OPERASI PENERBANGAN: {status}<br>
+    <span style='font-size:16px; font-weight:normal;'>{icao_code} - Siklus Radiosonde: {cycle_time}</span>
+    </div>
+    """, unsafe_allow_html=True
+)
+st.write("---")
+
+# =====================================================
+# METAR & TAF SECTION
+# =====================================================
+st.subheader(f"📡 Real-time Surface Observation ({icao_code})")
+col_metar, col_taf = st.columns(2)
+
+with col_metar:
+    st.markdown("**METAR (Aktual):**")
+    st.markdown(f"<div class='metar-text'>{aviation_data['metar']}</div>", unsafe_allow_html=True)
+
+with col_taf:
+    st.markdown("**TAF (Prakiraan):**")
+    st.markdown(f"<div class='metar-text'>{aviation_data['taf']}</div>", unsafe_allow_html=True)
+
+st.write("---")
+
+# =====================================================
+# UPPER AIR ANALYSIS & HAZARD
+# =====================================================
+st.subheader("☁️ Analisis Stabilitas Atmosfer (Radiosonde)")
+
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("CAPE (Energi Konvektif)", f"{row['cape']} J/kg")
+c2.metric("K-Index (Potensi Badai)", row["ki"])
+c3.metric("Lifted Index (LI)", row["li"])
+c4.metric("Freezing Level", f"{row['freeze']} ft")
+c5.metric("Upper Wind", f"{row['wind']} kt")
+
+st.write("")
+h1, h2, h3 = st.columns(3)
+with h1:
+    st.markdown(f"<div class='block'><h3>⛈️ Thunderstorm</h3><h1>{thunder}</h1></div>", unsafe_allow_html=True)
+with h2:
+    st.markdown(f"<div class='block'><h3>🌪️ Turbulence</h3><h1>{turbulence}</h1></div>", unsafe_allow_html=True)
+with h3:
+    st.markdown(f"<div class='block'><h3>❄️ Icing</h3><h1>{icing}</h1></div>", unsafe_allow_html=True)
+
+# =====================================================
+# INTERPRETATION & RECOMMENDATION
+# =====================================================
+summary = f"""
+### 💡 Interpretasi Taktis
+Data observasi permukaan (METAR) dan profil atmosfer atas menunjukkan kondisi konveksi **{thunder.lower()}**. 
+* **Termodinamika:** Nilai CAPE ({row['cape']} J/kg) dan LI ({row['li']}) mengindikasikan tingkat labilitas udara saat ini. K-Index di angka {row['ki']} merepresentasikan probabilitas pertumbuhan awan Cumulonimbus (CB) di sekitar aerodrome.
+* **Angin & Temperatur:** Kecepatan angin di lapisan atas ({row['wind']} kt) memicu potensi turbulensi **{turbulence.lower()}**. Waspadai level pembekuan (freezing level) pada ketinggian {row['freeze']} ft untuk risiko icing pada armada udara.
+
+### 📋 Rekomendasi Operasional Militer
+1.  **Validasi TAF:** Sinkronkan prakiraan TAF terbaru dengan pantauan radar cuaca secara berkala.
+2.  **Mitigasi Rute:** Hindari area dengan sel konvektif aktif jika nilai CAPE > 1500 J/kg, terutama pada fase *approach* dan *climb*.
+3.  **Briefing Penerbang:** Sampaikan risiko Icing ({icing}) dan Turbulensi ({turbulence}) secara eksplisit kepada aircrew sebelum *take-off*.
+"""
+st.info(summary)
+
+# =====================================================
+# RADAR & SATELLITE INTEGRATION
+# =====================================================
+st.write("---")
+st.subheader("🛰️ Tactical Weather Radar")
+st.caption("Peta cuaca interaktif berpusat pada koordinat Lanud.")
+
+iframe_url = f"https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=default&metricWind=kt&zoom=8&overlay=radar&product=radar&level=surface&lat={row['lat']}&lon={row['lon']}"
+components.iframe(iframe_url, height=500)
+
+# TAMBAHAN: Satelit Himawari-9 IR Enhanced BMKG (Menyesuaikan ICAO Stasiun)
+st.write("")
+st.markdown("**🛰️ Satelit Himawari-9 IR Enhanced (BMKG)**")
+
+# Kamus pemetaan ICAO ke kluster citra regional resmi BMKG
+satellite_mapping = {
+    "WITT": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
+    "WIMM": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
+    "WIBB": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
+    "WIKK": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
+    "WIPP": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
+    "WIII": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
+    "WICC": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
+    "WAHI": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
+    "WARR": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
+    "WADD": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
+    "WAAA": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sulawesi_latest.png",
+    "WAMM": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sulawesi_latest.png",
+    "WAPP": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Maluku_latest.png",
+    "WAJJ": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Papua_latest.png"
+}
+
+sat_url = satellite_mapping.get(icao_code, "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Indonesia_latest.png")
+st.image(sat_url, caption=f"Citra Satelit Himawari-9 IR Enhanced Regional Terkini - Lokasi: {station} ({icao_code})", use_container_width=True)
+
+# =====================================================
+# SKEW-T IMAGE FETCHING
+# =====================================================
+st.write("---")
+st.subheader("📈 Profil Radiosonde (Skew-T Log-P)")
+
+img, img_timestamp = fetch_image(row["wmo"])
+
+if img:
+    st.caption(f"Server BMKG Last-Modified: {img_timestamp}")
+    st.image(img, use_container_width=True)
+else:
+    st.warning("⚠️ BMKG belum mempublikasikan visualisasi sounding terbaru untuk stasiun ini atau server sedang down.")
+
+# =====================================================
+# FOOTER
+# =====================================================
+st.write("---")
+st.caption("SKYALERT | Integrasi API Aviation Weather Center & BMKG Upper Air | Sistem Pendukung Keputusan Taktis")
