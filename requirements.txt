@@ -1,6 +1,5 @@
-streamlit
 pandas
 requests
-streamlit-folium
 folium
+streamlit-folium
 Pillow
