@@ -2,10 +2,12 @@ import streamlit as st
 import pandas as pd
 import requests
 import folium
+import re
+
 from streamlit_folium import st_folium
-from io import StringIO
+from io import StringIO, BytesIO
 from PIL import Image
-from io import BytesIO
+from datetime import datetime, timezone, timedelta
 
 # =====================================================
 # CONFIG
@@ -67,12 +69,6 @@ section[data-testid="stSidebar"]{
     color:white;
 }
 
-.metric-card{
-    background:#132433;
-    padding:15px;
-    border-radius:12px;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -101,87 +97,125 @@ WAJJ,97690,Sentani,-2.576,140.516,1100,39,-4,14500,42
 df = pd.read_csv(StringIO(CSV_DATA))
 
 # =====================================================
-# IMAGE FETCH
+# HELPERS
 # =====================================================
 
+HEADERS = {
+    "User-Agent":"Mozilla/5.0"
+}
+
+@st.cache_data(ttl=300)
 def fetch_image(wmo):
 
     urls = [
-
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.PNG",
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.png",
-        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.PNG",
-        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.png",
     ]
 
     for url in urls:
-
         try:
-
             r = requests.get(
                 url,
+                headers=HEADERS,
                 timeout=10
             )
 
             if r.status_code == 200 and len(r.content) > 1000:
-
-                try:
-
-                    img = Image.open(
-                        BytesIO(r.content)
-                    )
-
-                    return img
-
-                except:
-                    continue
+                img = Image.open(BytesIO(r.content))
+                return img
 
         except:
             continue
 
     return None
 
+@st.cache_data(ttl=300)
+def fetch_metar_taf(icao):
+
+    metar = None
+    taf = None
+
+    try:
+        url = f"https://aviationweather.gov/data/metar/?ids={icao}&taf=1"
+        r = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=10
+        )
+
+        txt = r.text
+
+        metar_match = re.search(
+            rf"{icao}\s+\d{{6}}Z.*",
+            txt
+        )
+
+        taf_match = re.search(
+            rf"TAF\s+{icao}.*",
+            txt,
+            re.DOTALL
+        )
+
+        if metar_match:
+            metar = metar_match.group(0)
+
+        if taf_match:
+            taf = taf_match.group(0)
+
+    except:
+        pass
+
+    return metar, taf
+
 # =====================================================
 # ANALYSIS
 # =====================================================
 
-def analyze_weather(cape, ki, li, freeze, wind):
+def analyze_weather(row, metar, taf):
+
+    cape = row["cape"]
+    ki = row["ki"]
+    li = row["li"]
+    freeze = row["freeze"]
+    wind = row["wind"]
 
     score = 0
 
-    # CAPE
     if cape > 1000:
         score += 3
     elif cape > 500:
         score += 2
-    elif cape > 100:
-        score += 1
 
-    # KI
     if ki >= 38:
         score += 3
     elif ki >= 35:
         score += 2
-    elif ki >= 30:
-        score += 1
 
-    # LI
     if li <= -4:
         score += 3
     elif li <= -2:
         score += 2
-    elif li < 0:
-        score += 1
 
-    # WIND
     if wind >= 40:
         score += 3
     elif wind >= 30:
         score += 2
-    elif wind >= 20:
-        score += 1
 
-    # FREEZING
+    # METAR weather cues
+
+    if metar:
+        if "TS" in metar:
+            score += 2
+
+        if "CB" in metar:
+            score += 2
+
+    if taf:
+        if "TS" in taf:
+            score += 2
+
+    # icing
+
     icing = "RENDAH"
 
     if freeze < 15000:
@@ -190,7 +224,26 @@ def analyze_weather(cape, ki, li, freeze, wind):
     elif freeze < 18000:
         icing = "SEDANG"
 
-    # FINAL STATUS
+    # thunder
+
+    if score >= 9:
+        thunder = "TINGGI"
+    elif score >= 5:
+        thunder = "SEDANG"
+    else:
+        thunder = "RENDAH"
+
+    # turbulence
+
+    if wind >= 40:
+        turbulence = "TINGGI"
+    elif wind >= 30:
+        turbulence = "SEDANG"
+    else:
+        turbulence = "RENDAH"
+
+    # final
+
     if score >= 9:
         status = "AWAS"
         color = "alert-awas"
@@ -203,26 +256,6 @@ def analyze_weather(cape, ki, li, freeze, wind):
         status = "NORMAL"
         color = "alert-normal"
 
-    # THUNDERSTORM
-    if cape > 1000 or ki > 38:
-        thunder = "TINGGI"
-
-    elif cape > 500:
-        thunder = "SEDANG"
-
-    else:
-        thunder = "RENDAH"
-
-    # TURBULENCE
-    if wind >= 40:
-        turbulence = "TINGGI"
-
-    elif wind >= 30:
-        turbulence = "SEDANG"
-
-    else:
-        turbulence = "RENDAH"
-
     return status, color, thunder, turbulence, icing
 
 # =====================================================
@@ -230,12 +263,10 @@ def analyze_weather(cape, ki, li, freeze, wind):
 # =====================================================
 
 st.title("✈️ SKYALERT TNI AU")
-st.caption(
-    "Upper Air Radiosonde Monitoring Indonesia | BMKG Aviation"
-)
+st.caption("Upper Air Radiosonde Monitoring Indonesia | BMKG Aviation")
 
 # =====================================================
-# SELECT STATION
+# SELECT
 # =====================================================
 
 station = st.selectbox(
@@ -243,24 +274,33 @@ station = st.selectbox(
     df["name"]
 )
 
-row = df[
-    df["name"] == station
-].iloc[0]
+row = df[df["name"] == station].iloc[0]
 
 # =====================================================
-# ANALYSIS
+# LIVE DATA
 # =====================================================
+
+metar, taf = fetch_metar_taf(row["icao"])
 
 status, color, thunder, turbulence, icing = analyze_weather(
-    row["cape"],
-    row["ki"],
-    row["li"],
-    row["freeze"],
-    row["wind"]
+    row,
+    metar,
+    taf
 )
 
 # =====================================================
-# MAIN ALERT
+# TIMESTAMP
+# =====================================================
+
+utc_now = datetime.now(timezone.utc)
+wib = utc_now + timedelta(hours=7)
+
+st.caption(
+    f"OBS UTC: {utc_now:%d %b %Y %H:%MZ} | WIB: {wib:%d %b %Y %H:%M}"
+)
+
+# =====================================================
+# ALERT
 # =====================================================
 
 st.markdown(
@@ -276,9 +316,7 @@ st.markdown(
 # MAP
 # =====================================================
 
-st.subheader(
-    "Peta Radiosonde Indonesia"
-)
+st.subheader("Peta Radiosonde Indonesia")
 
 m = folium.Map(
     location=[-2.5,118],
@@ -288,33 +326,27 @@ m = folium.Map(
 
 for _, r in df.iterrows():
 
-    marker_color = "#00d4ff"
+    color_marker = "#00d4ff"
 
     if r["name"] == station:
-        marker_color = "#ffcc00"
+        color_marker = "#ffcc00"
 
     folium.CircleMarker(
         location=[r["lat"], r["lon"]],
         radius=8,
-        color=marker_color,
+        color=color_marker,
         fill=True,
-        fill_color=marker_color,
-        popup=f"{r['icao']} - {r['name']}"
+        fill_color=color_marker,
+        popup=f"{r['icao']} | {r['name']}"
     ).add_to(m)
 
-st_folium(
-    m,
-    width=None,
-    height=420
-)
+st_folium(m, height=420)
 
 # =====================================================
-# STATION INFO
+# METRICS
 # =====================================================
 
-st.subheader(
-    "Analisis Radiosonde"
-)
+st.subheader("Analisis Radiosonde")
 
 c1,c2,c3,c4,c5 = st.columns(5)
 
@@ -331,90 +363,51 @@ c5.metric("Wind", f"{row['wind']} kt")
 h1,h2,h3 = st.columns(3)
 
 with h1:
-    st.markdown(f"""
-    <div class="block">
-    <h3>⛈ Thunderstorm</h3>
-    <h1>{thunder}</h1>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='block'><h3>⛈ Thunderstorm</h3><h1>{thunder}</h1></div>",
+        unsafe_allow_html=True
+    )
 
 with h2:
-    st.markdown(f"""
-    <div class="block">
-    <h3>🌪 Turbulence</h3>
-    <h1>{turbulence}</h1>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='block'><h3>🌪 Turbulence</h3><h1>{turbulence}</h1></div>",
+        unsafe_allow_html=True
+    )
 
 with h3:
-    st.markdown(f"""
-    <div class="block">
-    <h3>❄ Icing</h3>
-    <h1>{icing}</h1>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='block'><h3>❄ Icing</h3><h1>{icing}</h1></div>",
+        unsafe_allow_html=True
+    )
 
 # =====================================================
-# INTERPRETASI
+# METAR TAF
 # =====================================================
 
-st.subheader(
-    "Kesimpulan Data Radiosonde"
-)
+st.subheader("METAR / TAF")
 
-summary = f"""
+if metar:
+    st.code(metar)
 
-### {station} ({row['icao']})
-
-- Potensi thunderstorm : **{thunder}**
-- Risiko turbulensi : **{turbulence}**
-- Risiko icing : **{icing}**
-- Status operasional penerbangan : **{status}**
-
-### Interpretasi
-
-Data radiosonde menunjukkan kondisi atmosfer dengan potensi konveksi {thunder.lower()}.
-
-Nilai CAPE sebesar {row['cape']} J/kg menunjukkan tingkat energi konvektif atmosfer.
-
-Nilai KI sebesar {row['ki']} menunjukkan potensi pertumbuhan awan Cumulonimbus.
-
-Nilai LI sebesar {row['li']} menunjukkan tingkat ketidakstabilan atmosfer.
-
-Kecepatan angin lapisan atas mencapai {row['wind']} knot sehingga potensi turbulensi berada pada kategori {turbulence.lower()}.
-
-### Rekomendasi Operasional
-
-- Laksanakan monitoring cuaca lanjutan sebelum penerbangan.
-- Waspadai pertumbuhan awan CB di sekitar jalur penerbangan.
-- Perhatikan potensi icing dan turbulensi pada fase climb dan descent.
-"""
-
-st.markdown(summary)
+if taf:
+    st.code(taf)
 
 # =====================================================
-# IMAGE
+# SOUNDING
 # =====================================================
 
-st.subheader(
-    "Latest Radiosonde BMKG"
-)
+st.subheader("Latest Radiosonde BMKG")
 
-img = fetch_image(
-    row["wmo"]
-)
+img = fetch_image(row["wmo"])
 
 if img:
-
     st.image(
         img,
         use_container_width=True
     )
-
 else:
-
     st.warning(
-        "BMKG belum mempublikasikan sounding terbaru untuk stasiun ini."
+        "BMKG belum mempublikasikan sounding terbaru."
     )
 
 # =====================================================
