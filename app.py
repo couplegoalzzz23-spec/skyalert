@@ -5,8 +5,12 @@ import folium
 from streamlit_folium import st_folium
 from io import StringIO, BytesIO
 from PIL import Image
-from datetime import datetime, timezone # Menggunakan timezone bawaan Python, bukan pytz
+from datetime import datetime, timezone
 import streamlit.components.v1 as components
+import urllib3
+
+# Menonaktifkan peringatan SSL yang sering muncul saat menarik data dari server pemerintah
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =====================================================
 # CONFIG
@@ -56,10 +60,9 @@ WAJJ,97690,Sentani,-2.576,140.516,1100,39,-4,14500,42
 df = pd.read_csv(StringIO(CSV_DATA))
 
 # =====================================================
-# REAL-TIME DATA FETCHERS
+# REAL-TIME DATA & IMAGE FETCHERS (FIXED)
 # =====================================================
 def fetch_metar_taf(icao):
-    """Mengambil data METAR dan TAF secara real-time dari Aviation Weather Center API"""
     data = {"metar": "Data tidak tersedia", "taf": "Data tidak tersedia"}
     try:
         metar_url = f"https://aviationweather.gov/api/data/metar?ids={icao}&format=raw"
@@ -77,89 +80,61 @@ def fetch_metar_taf(icao):
     return data
 
 def get_observation_cycle():
-    """Menentukan cycle observasi Radiosonde (00Z atau 12Z) menggunakan module bawaan"""
-    now_utc = datetime.now(timezone.utc) # Perbaikan di baris ini
+    now_utc = datetime.now(timezone.utc)
     if now_utc.hour >= 12:
-        cycle = f"{now_utc.strftime('%Y-%m-%d')} 12:00 UTC"
+        return f"{now_utc.strftime('%Y-%m-%d')} 12:00 UTC"
     else:
-        cycle = f"{now_utc.strftime('%Y-%m-%d')} 00:00 UTC"
-    return cycle
+        return f"{now_utc.strftime('%Y-%m-%d')} 00:00 UTC"
 
-def fetch_image(wmo):
-    """Menarik gambar Skew-T BMKG beserta timestamp dari HTTP header"""
-    urls = [
-        f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.PNG",
-        f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.png",
-        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.PNG",
-        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.png",
-    ]
-    
-    timestamp = "Timestamp tidak diketahui"
-    for url in urls:
-        try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200 and len(r.content) > 1000:
-                if 'Last-Modified' in r.headers:
-                    timestamp = r.headers['Last-Modified']
-                
-                try:
-                    img = Image.open(BytesIO(r.content))
-                    return img, timestamp
-                except:
-                    continue
-        except:
-            continue
-    return None, timestamp
+def fetch_image_secure(url):
+    """Fungsi backend untuk menarik gambar secara aman dengan bypass SSL & User-Agent"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+    }
+    try:
+        # verify=False penting untuk server yang SSL-nya bermasalah
+        r = requests.get(url, headers=headers, verify=False, timeout=10)
+        if r.status_code == 200 and len(r.content) > 1000:
+            img = Image.open(BytesIO(r.content))
+            timestamp = r.headers.get('Last-Modified', 'Timestamp tidak diketahui')
+            return img, timestamp
+    except Exception:
+        pass
+    return None, None
 
 # =====================================================
 # ENHANCED METEOROLOGICAL ANALYSIS
 # =====================================================
 def analyze_weather(cape, ki, li, freeze, wind):
-    # Analisis Thunderstorm
     if cape > 2500 or li < -5 or ki >= 40:
-        thunder = "TINGGI"
-        thunder_score = 3
+        thunder = "TINGGI"; thunder_score = 3
     elif cape > 1000 or li < -2 or ki >= 30:
-        thunder = "SEDANG"
-        thunder_score = 2
+        thunder = "SEDANG"; thunder_score = 2
     else:
-        thunder = "RENDAH"
-        thunder_score = 1
+        thunder = "RENDAH"; thunder_score = 1
 
-    # Analisis Turbulensi
     if wind >= 40:
-        turbulence = "TINGGI"
-        turb_score = 3
+        turbulence = "TINGGI"; turb_score = 3
     elif wind >= 25:
-        turbulence = "SEDANG"
-        turb_score = 2
+        turbulence = "SEDANG"; turb_score = 2
     else:
-        turbulence = "RENDAH"
-        turb_score = 1
+        turbulence = "RENDAH"; turb_score = 1
 
-    # Analisis Icing
     if freeze < 12000:
-        icing = "TINGGI"
-        ice_score = 3
+        icing = "TINGGI"; ice_score = 3
     elif freeze < 16000:
-        icing = "SEDANG"
-        ice_score = 2
+        icing = "SEDANG"; ice_score = 2
     else:
-        icing = "RENDAH"
-        ice_score = 1
+        icing = "RENDAH"; ice_score = 1
 
-    # Status Keseluruhan
     total_score = thunder_score + turb_score + ice_score
-    
     if total_score >= 7 or thunder_score == 3:
-        status = "AWAS"
-        color = "alert-awas"
+        status = "AWAS"; color = "alert-awas"
     elif total_score >= 5:
-        status = "SIAGA"
-        color = "alert-siaga"
+        status = "SIAGA"; color = "alert-siaga"
     else:
-        status = "NORMAL"
-        color = "alert-normal"
+        status = "NORMAL"; color = "alert-normal"
 
     return status, color, thunder, turbulence, icing
 
@@ -179,7 +154,6 @@ with c_sel1:
 row = df[df["name"] == station].iloc[0]
 icao_code = row["icao"]
 
-# Fetch Real-time data
 aviation_data = fetch_metar_taf(icao_code)
 cycle_time = get_observation_cycle()
 status, color, thunder, turbulence, icing = analyze_weather(row["cape"], row["ki"], row["li"], row["freeze"], row["wind"])
@@ -261,45 +235,69 @@ st.caption("Peta cuaca interaktif berpusat pada koordinat Lanud.")
 iframe_url = f"https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=default&metricWind=kt&zoom=8&overlay=radar&product=radar&level=surface&lat={row['lat']}&lon={row['lon']}"
 components.iframe(iframe_url, height=500)
 
-# 2. Satelit Himawari-9 IR Enhanced BMKG
+# 2. Satelit Himawari-9 IR Enhanced BMKG (FIXED)
 st.write("")
-st.markdown("**🛰️ Satelit Himawari-9 IR Enhanced (BMKG)**")
+st.markdown("**🛰️ [Satelit Himawari-9 IR Enhanced (BMKG)](https://www.bmkg.go.id/cuaca/satelit/himawari-ir-enhanced)**")
 
-# Kamus pemetaan ICAO ke URL gambar citra satelit regional dari server aset BMKG
-satellite_mapping = {
-    "WITT": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
-    "WIMM": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
-    "WIBB": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
-    "WIKK": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
-    "WIPP": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
-    "WIII": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
-    "WICC": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
-    "WAHI": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
-    "WARR": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
-    "WADD": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Balinusra_latest.png",
-    "WAAA": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sulawesi_latest.png",
-    "WAMM": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sulawesi_latest.png",
-    "WAPP": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Maluku_latest.png",
-    "WAJJ": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Papua_latest.png"
-}
+# URL Dasar server BMKG (Ditambahkan Open Data BMKG sebagai backup stabil)
+asset_base = "https://asset-mkg.bmkg.go.id/satelit/"
+mews_base = "https://data.bmkg.go.id/datamkg/MEWS/satelit/"
 
-# Mengambil URL sesuai lokasi, jika di luar daftar fallback ke seluruh Indonesia
-sat_url = satellite_mapping.get(icao_code, "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Indonesia_latest.png")
+# Pemetaan otomatis ICAO ke rute URL yang ditarik secara backend
+sat_fallback_urls = []
+if icao_code in ["WITT", "WIMM", "WIBB", "WIKK", "WIPP"]:
+    sat_fallback_urls = [f"{asset_base}H9_EH_Sumatera_latest.png", f"{mews_base}EH_Sumatera.png"]
+elif icao_code in ["WIII", "WICC", "WAHI", "WARR"]:
+    sat_fallback_urls = [f"{asset_base}H9_EH_Jawa_latest.png", f"{mews_base}EH_Jawa.png"]
+elif icao_code in ["WADD"]:
+    sat_fallback_urls = [f"{asset_base}H9_EH_Balinusra_latest.png", f"{mews_base}EH_Indo.png"]
+elif icao_code in ["WAAA", "WAMM"]:
+    sat_fallback_urls = [f"{asset_base}H9_EH_Sulawesi_latest.png", f"{mews_base}EH_Sulawesi.png"]
+elif icao_code in ["WAPP"]:
+    sat_fallback_urls = [f"{asset_base}H9_EH_Maluku_latest.png", f"{mews_base}EH_Maluku.png"]
+elif icao_code in ["WAJJ"]:
+    sat_fallback_urls = [f"{asset_base}H9_EH_Papua_latest.png", f"{mews_base}EH_Papua.png"]
+else:
+    sat_fallback_urls = [f"{asset_base}H9_EH_Indonesia_latest.png"]
 
-# Menampilkan gambar satelit secara dinamis
-st.image(sat_url, caption=f"Citra Satelit Regional Terkini - {station} ({icao_code})", use_container_width=True)
+sat_fallback_urls.append(f"{mews_base}EH_Indo.png") # Ultimate fallback
+
+sat_img = None
+for url in sat_fallback_urls:
+    sat_img, _ = fetch_image_secure(url)
+    if sat_img:
+        # Menampilkan gambar berbasis bytes, menghindari masalah CORS di browser pengguna
+        st.image(sat_img, caption=f"Citra Satelit Regional Terkini - Lokasi: {station} ({icao_code})", use_container_width=True)
+        break
+
+if not sat_img:
+    st.warning("⚠️ Gagal memuat citra satelit. Server BMKG sedang menolak akses, maintenance, atau down.")
 
 # =====================================================
-# SKEW-T IMAGE FETCHING
+# SKEW-T IMAGE FETCHING (FIXED)
 # =====================================================
 st.write("---")
 st.subheader("📈 Profil Radiosonde (Skew-T Log-P)")
 
-img, img_timestamp = fetch_image(row["wmo"])
+# List URL Radiosonde yang ditarik via backend
+rason_urls = [
+    f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{row['wmo']}.PNG",
+    f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{row['wmo']}.png",
+    f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{row['wmo']}.PNG",
+    f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{row['wmo']}.png"
+]
 
-if img:
+skew_img = None
+img_timestamp = "Tidak diketahui"
+
+for url in rason_urls:
+    skew_img, img_timestamp = fetch_image_secure(url)
+    if skew_img:
+        break
+
+if skew_img:
     st.caption(f"Server BMKG Last-Modified: {img_timestamp}")
-    st.image(img, use_container_width=True)
+    st.image(skew_img, use_container_width=True)
 else:
     st.warning("⚠️ BMKG belum mempublikasikan visualisasi sounding terbaru untuk stasiun ini atau server sedang down.")
 
