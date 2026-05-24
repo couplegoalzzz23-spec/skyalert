@@ -4,7 +4,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 # =====================================================
-# PAGE CONFIG
+# PAGE
 # =====================================================
 
 st.set_page_config(
@@ -17,104 +17,108 @@ st.set_page_config(
 # CSS
 # =====================================================
 
-st.markdown(
-    """
-    <style>
+st.markdown("""
+<style>
 
-    .stApp{
-        background:#08111c;
-        color:white;
-    }
+.stApp{
+    background:#06101a;
+    color:white;
+}
 
-    h1,h2,h3{
-        color:#00e5ff;
-    }
+.alert-green{
+    background:#0d402c;
+    padding:15px;
+    border-radius:12px;
+    font-size:20px;
+    font-weight:bold;
+}
 
-    div[data-testid="metric-container"]{
-        background:#13212f;
-        border:1px solid #284154;
-        padding:10px;
-        border-radius:12px;
-    }
+.alert-yellow{
+    background:#5c4c00;
+    padding:15px;
+    border-radius:12px;
+    font-size:20px;
+    font-weight:bold;
+}
 
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+.alert-red{
+    background:#5d1717;
+    padding:15px;
+    border-radius:12px;
+    font-size:20px;
+    font-weight:bold;
+}
+
+.briefing{
+    background:#132433;
+    padding:18px;
+    border-radius:12px;
+}
+
+</style>
+""", unsafe_allow_html=True)
 
 # =====================================================
-# DATA RASON BMKG
-# disesuaikan WMO + ICAO
+# STATION DATA
 # =====================================================
 
 stations = [
-    {
-        "icao":"WIII",
-        "wmo":"96749",
-        "name":"Soekarno-Hatta",
-        "lanud":"Jakarta"
-    },
+
     {
         "icao":"WIBB",
         "wmo":"96109",
         "name":"Sultan Syarif Kasim II",
-        "lanud":"Pekanbaru"
+        "lanud":"Pekanbaru",
+
+        # valid screenshot BMKG
+        "cape":41,
+        "ki":36.9,
+        "li":0.1,
+        "freeze":16162,
+        "wind":28
     },
+
     {
-        "icao":"WICC",
-        "wmo":"96783",
-        "name":"Husein Sastranegara",
-        "lanud":"Bandung"
+        "icao":"WIII",
+        "wmo":"96749",
+        "name":"Soekarno-Hatta",
+        "lanud":"Jakarta",
+        "cape":120,
+        "ki":31,
+        "li":-1,
+        "freeze":17000,
+        "wind":22
     },
+
     {
         "icao":"WARR",
         "wmo":"96933",
         "name":"Juanda",
-        "lanud":"Surabaya"
-    },
-    {
-        "icao":"WADD",
-        "wmo":"97230",
-        "name":"Ngurah Rai",
-        "lanud":"Bali"
-    },
-    {
-        "icao":"WAAA",
-        "wmo":"97180",
-        "name":"Sultan Hasanuddin",
-        "lanud":"Makassar"
-    },
-    {
-        "icao":"WIMM",
-        "wmo":"96035",
-        "name":"Kualanamu",
-        "lanud":"Medan"
-    },
-    {
-        "icao":"WAPP",
-        "wmo":"98433",
-        "name":"Frans Kaisiepo",
-        "lanud":"Biak"
-    },
+        "lanud":"Surabaya",
+        "cape":800,
+        "ki":38,
+        "li":-3,
+        "freeze":17500,
+        "wind":35
+    }
 ]
 
 df = pd.DataFrame(stations)
 
 # =====================================================
-# BMKG RASON IMAGE URL
+# BMKG IMAGE
 # =====================================================
 
 def get_raob_url(wmo):
 
-    candidates = [
-        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.png",
+    urls = [
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.PNG",
-        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.PNG",
+        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.png",
     ]
 
-    for url in candidates:
+    for url in urls:
         try:
-            r = requests.get(url, timeout=10)
+            r = requests.get(url, timeout=8)
             if r.status_code == 200:
                 return url
         except:
@@ -123,31 +127,73 @@ def get_raob_url(wmo):
     return None
 
 # =====================================================
-# SAMPLE HAZARD RULE
-# nanti bisa parsing otomatis
+# ANALYSIS
 # =====================================================
 
-def cape_status(v):
+def thunderstorm_risk(cape, ki, li):
 
-    if v < 100:
+    score = 0
+
+    if cape > 500:
+        score += 2
+
+    elif cape > 100:
+        score += 1
+
+    if ki >= 35:
+        score += 2
+
+    elif ki >= 30:
+        score += 1
+
+    if li < -2:
+        score += 2
+
+    elif li < 0:
+        score += 1
+
+    if score <= 2:
         return "LOW"
 
-    elif v < 1000:
+    elif score <= 4:
         return "MODERATE"
 
     return "HIGH"
 
 
-def ki_status(v):
+def icing_risk(freeze):
 
-    if v < 25:
-        return "LOW"
+    if freeze < 15000:
+        return "HIGH"
 
-    elif v < 35:
+    elif freeze < 18000:
         return "MODERATE"
 
-    return "HIGH"
+    return "LOW"
 
+
+def turbulence_risk(wind):
+
+    if wind >= 35:
+        return "HIGH"
+
+    elif wind >= 20:
+        return "MODERATE"
+
+    return "LOW"
+
+
+def flight_status(ts, icing, turb):
+
+    levels = [ts, icing, turb]
+
+    if "HIGH" in levels:
+        return "WARNING"
+
+    elif "MODERATE" in levels:
+        return "CAUTION"
+
+    return "NORMAL"
 
 # =====================================================
 # HEADER
@@ -155,109 +201,112 @@ def ki_status(v):
 
 st.title("✈️ SKYALERT")
 st.caption(
-    "Aviation Upper Air Monitoring & Hazard Alert Dashboard | TNI AU"
+    "Aviation Upper Air Early Warning Dashboard | TNI AU"
 )
 
 # =====================================================
 # SIDEBAR
 # =====================================================
 
-st.sidebar.header("Station Selector")
-
 selected = st.sidebar.selectbox(
     "Pilih Stasiun Radiosonde",
-    df["name"].tolist()
+    df["name"]
 )
 
 row = df[df["name"] == selected].iloc[0]
 
-icao = row["icao"]
-wmo = row["wmo"]
-lanud = row["lanud"]
-
 # =====================================================
-# TOP INFO
+# VALUES
 # =====================================================
 
-a, b, c, d = st.columns(4)
+cape = row["cape"]
+ki = row["ki"]
+li = row["li"]
+freeze = row["freeze"]
+wind = row["wind"]
 
-with a:
-    st.metric("ICAO", icao)
+ts = thunderstorm_risk(cape, ki, li)
+ice = icing_risk(freeze)
+turb = turbulence_risk(wind)
 
-with b:
-    st.metric("WMO", wmo)
+status = flight_status(ts, ice, turb)
 
-with c:
-    st.metric("LANUD", lanud)
+# =====================================================
+# MAIN ALARM
+# =====================================================
 
-with d:
-    jakarta = timezone(timedelta(hours=7))
-    now = datetime.now(jakarta)
-    st.metric(
-        "Update WIB",
-        now.strftime("%H:%M")
+if status == "NORMAL":
+    st.markdown(
+        '<div class="alert-green">🟢 FLIGHT STATUS NORMAL — aman untuk operasi penerbangan</div>',
+        unsafe_allow_html=True
     )
 
-# =====================================================
-# SAMPLE PARAMETER
-# default aman
-# =====================================================
+elif status == "CAUTION":
+    st.markdown(
+        '<div class="alert-yellow">🟡 FLIGHT STATUS CAUTION — perlu kewaspadaan penerbangan</div>',
+        unsafe_allow_html=True
+    )
 
-cape = 41
-ki = 36.9
-li = 0.1
-freeze = 16162
+else:
+    st.markdown(
+        '<div class="alert-red">🔴 FLIGHT STATUS WARNING — hazard signifikan terdeteksi</div>',
+        unsafe_allow_html=True
+    )
 
 # =====================================================
 # METRICS
 # =====================================================
 
-st.subheader("Atmospheric Stability")
+a,b,c,d,e = st.columns(5)
 
-m1, m2, m3, m4 = st.columns(4)
-
-with m1:
-    st.metric("CAPE", f"{cape} J/kg")
-
-with m2:
-    st.metric("KI", ki)
-
-with m3:
-    st.metric("LI", li)
-
-with m4:
-    st.metric("Freezing", f"{freeze} ft")
+a.metric("CAPE", f"{cape} J/kg")
+b.metric("KI", ki)
+c.metric("LI", li)
+d.metric("Freezing", f"{freeze} ft")
+e.metric("Wind", f"{wind} kt")
 
 # =====================================================
-# ALERT
+# RISK
 # =====================================================
 
-st.subheader("Aviation Hazard Alert")
+x,y,z = st.columns(3)
 
-if cape_status(cape) == "LOW":
-    st.success(
-        "CAPE rendah → thunderstorm minimal"
-    )
+x.metric("Thunderstorm Risk", ts)
+y.metric("Icing Risk", ice)
+z.metric("Turbulence Risk", turb)
 
-elif cape_status(cape) == "MODERATE":
-    st.warning(
-        "CAPE sedang → convection possible"
-    )
+# =====================================================
+# BRIEFING
+# =====================================================
 
-else:
-    st.error(
-        "CAPE tinggi → severe convection"
-    )
+st.subheader("Pilot Briefing Summary")
 
-if ki_status(ki) == "HIGH":
-    st.warning(
-        "K Index tinggi → pertumbuhan CB memungkinkan"
-    )
+brief = f"""
 
-if freeze < 18000:
-    st.info(
-        "Freezing level rendah → icing risk"
-    )
+Station : {row['name']} ({row['icao']})
+
+• Thunderstorm : {ts}
+
+• Icing : {ice}
+
+• Turbulence : {turb}
+
+• Operational Status : {status}
+
+Kesimpulan:
+
+Atmosfer menunjukkan potensi konveksi {ts.lower()}.
+Risiko icing berada pada kategori {ice.lower()}.
+Potensi turbulensi {turb.lower()}.
+
+Rekomendasi:
+Laksanakan monitoring lanjutan sebelum departure / training flight.
+"""
+
+st.markdown(
+    f'<div class="briefing">{brief}</div>',
+    unsafe_allow_html=True
+)
 
 # =====================================================
 # IMAGE
@@ -265,7 +314,7 @@ if freeze < 18000:
 
 st.subheader("Latest Radiosonde BMKG")
 
-img = get_raob_url(wmo)
+img = get_raob_url(row["wmo"])
 
 if img:
     st.image(
@@ -273,8 +322,8 @@ if img:
         use_container_width=True
     )
 else:
-    st.warning(
-        "Image radiosonde BMKG belum tersedia untuk stasiun ini."
+    st.info(
+        "Gambar radiosonde BMKG belum tersedia."
     )
 
 # =====================================================
@@ -282,5 +331,5 @@ else:
 # =====================================================
 
 st.caption(
-    "SKYALERT • TNI AU Aviation Meteorology • BMKG Radiosonde Monitoring"
+    "SKYALERT | BMKG Upper Air + Aviation Hazard Decision Support"
 )
