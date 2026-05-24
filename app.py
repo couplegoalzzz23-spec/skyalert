@@ -5,8 +5,7 @@ import folium
 from streamlit_folium import st_folium
 from io import StringIO, BytesIO
 from PIL import Image
-from datetime import datetime, timedelta
-import pytz
+from datetime import datetime, timezone # Menggunakan timezone bawaan Python, bukan pytz
 import streamlit.components.v1 as components
 
 # =====================================================
@@ -37,8 +36,6 @@ section[data-testid="stSidebar"] { background:#0d1826; }
 # =====================================================
 # STATION DATA (FALLBACK/MOCK DATABASE)
 # =====================================================
-# Catatan: Idealnya nilai CAPE, KI, LI ini ditarik real-time dari parsing data RAW Radiosonde.
-# Karena web BMKG saat ini hanya menampilkan gambar, CSV ini bertindak sebagai fallback data historis/sementara.
 CSV_DATA = """
 icao,wmo,name,lat,lon,cape,ki,li,freeze,wind
 WITT,96001,Sultan Iskandar Muda,5.523,95.420,850,37,-3,16000,35
@@ -65,7 +62,6 @@ def fetch_metar_taf(icao):
     """Mengambil data METAR dan TAF secara real-time dari Aviation Weather Center API"""
     data = {"metar": "Data tidak tersedia", "taf": "Data tidak tersedia"}
     try:
-        # Endpoint Text API AWC yang lebih reliabel untuk parsing
         metar_url = f"https://aviationweather.gov/api/data/metar?ids={icao}&format=raw"
         taf_url = f"https://aviationweather.gov/api/data/taf?ids={icao}&format=raw"
         
@@ -76,13 +72,13 @@ def fetch_metar_taf(icao):
         req_taf = requests.get(taf_url, timeout=5)
         if req_taf.status_code == 200 and req_taf.text.strip():
             data["taf"] = req_taf.text.strip()
-    except Exception as e:
+    except Exception:
         pass
     return data
 
 def get_observation_cycle():
-    """Menentukan cycle observasi Radiosonde (00Z atau 12Z) berdasarkan waktu saat ini"""
-    now_utc = datetime.now(pytz.utc)
+    """Menentukan cycle observasi Radiosonde (00Z atau 12Z) menggunakan module bawaan"""
+    now_utc = datetime.now(timezone.utc) # Perbaikan di baris ini
     if now_utc.hour >= 12:
         cycle = f"{now_utc.strftime('%Y-%m-%d')} 12:00 UTC"
     else:
@@ -103,7 +99,6 @@ def fetch_image(wmo):
         try:
             r = requests.get(url, timeout=10)
             if r.status_code == 200 and len(r.content) > 1000:
-                # Coba ambil timestamp modifikasi file dari server BMKG jika ada
                 if 'Last-Modified' in r.headers:
                     timestamp = r.headers['Last-Modified']
                 
@@ -120,10 +115,7 @@ def fetch_image(wmo):
 # ENHANCED METEOROLOGICAL ANALYSIS
 # =====================================================
 def analyze_weather(cape, ki, li, freeze, wind):
-    """
-    Algoritma meteorologi yang ditingkatkan menggunakan standar threshold indeks stabilitas
-    """
-    # Analisis Thunderstorm (Konveksi)
+    # Analisis Thunderstorm
     if cape > 2500 or li < -5 or ki >= 40:
         thunder = "TINGGI"
         thunder_score = 3
@@ -134,7 +126,7 @@ def analyze_weather(cape, ki, li, freeze, wind):
         thunder = "RENDAH"
         thunder_score = 1
 
-    # Analisis Turbulensi (Berdasarkan angin lapisan atas sebagai proxy)
+    # Analisis Turbulensi
     if wind >= 40:
         turbulence = "TINGGI"
         turb_score = 3
@@ -145,8 +137,7 @@ def analyze_weather(cape, ki, li, freeze, wind):
         turbulence = "RENDAH"
         turb_score = 1
 
-    # Analisis Icing (Berdasarkan ketinggian Freezing Level)
-    # Semakin rendah freezing level, semakin tinggi risiko icing pada fase climb/descent awal
+    # Analisis Icing
     if freeze < 12000:
         icing = "TINGGI"
         ice_score = 3
@@ -157,7 +148,7 @@ def analyze_weather(cape, ki, li, freeze, wind):
         icing = "RENDAH"
         ice_score = 1
 
-    # Status Keseluruhan Berdasarkan Agregat Bahaya
+    # Status Keseluruhan
     total_score = thunder_score + turb_score + ice_score
     
     if total_score >= 7 or thunder_score == 3:
@@ -207,7 +198,7 @@ st.markdown(
 st.write("---")
 
 # =====================================================
-# METAR & TAF SECTION (NEW)
+# METAR & TAF SECTION
 # =====================================================
 st.subheader(f"📡 Real-time Surface Observation ({icao_code})")
 col_metar, col_taf = st.columns(2)
@@ -260,13 +251,12 @@ Data observasi permukaan (METAR) dan profil atmosfer atas menunjukkan kondisi ko
 st.info(summary)
 
 # =====================================================
-# RADAR & SATELLITE INTEGRATION (NEW)
+# RADAR & SATELLITE INTEGRATION
 # =====================================================
 st.write("---")
 st.subheader("🛰️ Tactical Weather Radar")
 st.caption("Peta cuaca interaktif berpusat pada koordinat Lanud.")
 
-# Menggunakan iframe Windy untuk radar operasional real-time sebagai pengganti radar statis BMKG yang sering berubah URL-nya
 iframe_url = f"https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=default&metricWind=kt&zoom=8&overlay=radar&product=radar&level=surface&lat={row['lat']}&lon={row['lon']}"
 components.iframe(iframe_url, height=500)
 
