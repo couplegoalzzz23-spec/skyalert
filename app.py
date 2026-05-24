@@ -254,17 +254,18 @@ st.info(summary)
 # RADAR & SATELLITE INTEGRATION
 # =====================================================
 st.write("---")
-st.subheader("🛰️ Tactical Weather Radar")
+st.subheader("🛰️ Tactical Weather Radar & Satellite")
 st.caption("Peta cuaca interaktif berpusat pada koordinat Lanud.")
 
+# 1. Radar Cuaca (Windy)
 iframe_url = f"https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=default&metricWind=kt&zoom=8&overlay=radar&product=radar&level=surface&lat={row['lat']}&lon={row['lon']}"
 components.iframe(iframe_url, height=500)
 
-# TAMBAHAN: Satelit Himawari-9 IR Enhanced BMKG (Menyesuaikan ICAO Stasiun)
+# 2. Satelit Himawari-9 IR Enhanced BMKG
 st.write("")
 st.markdown("**🛰️ Satelit Himawari-9 IR Enhanced (BMKG)**")
 
-# Kamus pemetaan ICAO ke kluster citra regional resmi BMKG
+# Kamus pemetaan ICAO ke URL gambar citra satelit regional dari server aset BMKG
 satellite_mapping = {
     "WITT": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
     "WIMM": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sumatera_latest.png",
@@ -275,15 +276,18 @@ satellite_mapping = {
     "WICC": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
     "WAHI": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
     "WARR": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
-    "WADD": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Jawa_latest.png",
+    "WADD": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Balinusra_latest.png",
     "WAAA": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sulawesi_latest.png",
     "WAMM": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Sulawesi_latest.png",
     "WAPP": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Maluku_latest.png",
     "WAJJ": "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Papua_latest.png"
 }
 
+# Mengambil URL sesuai lokasi, jika di luar daftar fallback ke seluruh Indonesia
 sat_url = satellite_mapping.get(icao_code, "https://asset-mkg.bmkg.go.id/satelit/H9_EH_Indonesia_latest.png")
-st.image(sat_url, caption=f"Citra Satelit Himawari-9 IR Enhanced Regional Terkini - Lokasi: {station} ({icao_code})", use_container_width=True)
+
+# Menampilkan gambar satelit secara dinamis
+st.image(sat_url, caption=f"Citra Satelit Regional Terkini - {station} ({icao_code})", use_container_width=True)
 
 # =====================================================
 # SKEW-T IMAGE FETCHING
