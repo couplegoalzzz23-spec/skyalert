@@ -4,7 +4,7 @@ import requests
 import os
 import re
 from io import StringIO, BytesIO
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageOps
 from datetime import datetime, timezone
 import streamlit.components.v1 as components
 
@@ -20,7 +20,7 @@ st.set_page_config(
 st.markdown("""
 <style>
     .stApp { background:#06101a; color:white; }
-    section[data-testid=\"stSidebar\"] { background:#0d1826; }
+    section[data-testid="stSidebar"] { background:#0d1826; }
     .block { background:#132433; padding:18px; border-radius:14px; margin-bottom:15px; }
     .alert-normal { background:#0d402c; padding:18px; border-radius:14px; font-size:24px; font-weight:bold; color:white; text-align:center; }
     .alert-siaga { background:#7a5a00; padding:18px; border-radius:14px; font-size:24px; font-weight:bold; color:white; text-align:center; }
@@ -104,7 +104,7 @@ def fetch_bmkg_public_weather(adm4_code):
 
 @st.cache_data(ttl=300)
 def fetch_rason_data(wmo):
-    """Menarik gambar PNG Skew-T secara langsung dan mengekstrak metrik numerik indeks menggunakan OCR secara aman"""
+    """Menarik gambar PNG Skew-T dan mengekstrak metrik menggunakan OCR teroptimasi"""
     urls = [
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.PNG",
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.png",
@@ -112,23 +112,37 @@ def fetch_rason_data(wmo):
         f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.png",
     ]
     
+    ocr_debug_text = ""
     for url in urls:
         try:
             resp = requests.get(url, timeout=10)
             if resp.status_code == 200 and len(resp.content) > 1000:
                 img = Image.open(BytesIO(resp.content))
                 
-                # Ekstraksi teks dari gambar (OCR) dengan proteksi error modul terpisah
+                # --- PROSES COMPUTER VISION (OCR OPTIMIZATION) ---
                 try:
                     import pytesseract
-                    # Catatan Opsional: Jika berjalan di Windows lokal, arahkan path binary-nya di sini jika diperlukan:
-                    # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-                    txt = pytesseract.image_to_string(img)
-                except Exception:
+                    # Memotong gambar (Crop) area 40% atas gambar tempat teks bermukim
+                    w, h = img.size
+                    top_img = img.crop((0, 0, w, int(h * 0.45)))
+                    
+                    # Konversi ke Hitam Putih (Grayscale) & Tingkatkan Kontras
+                    gray_img = top_img.convert('L')
+                    enhancer = ImageEnhance.Contrast(gray_img)
+                    high_contrast_img = enhancer.enhance(2.5) # Kontras dinaikkan 250%
+                    
+                    # Tambahkan konfigurasi Tesseract agar fokus membaca angka dan karakter standar
+                    custom_config = r'--oem 3 --psm 6'
+                    txt = pytesseract.image_to_string(high_contrast_img, config=custom_config)
+                    ocr_debug_text = txt # Menyimpan hasil bacaan mentah untuk pengecekan
+                except Exception as e:
                     txt = ""
+                    ocr_debug_text = f"Modul OCR gagal berjalan: {e}"
                 
                 if txt.strip():
-                    # RegEx Fleksibel tinggi untuk memetakan indeks pada gambar keluaran SHARPpy milik BMKG
+                    # RegEx dengan pembersihan karakter (menghilangkan salah baca huruf 'O' jadi '0', dsb)
+                    txt = txt.replace('O', '0').replace('o', '0')
+                    
                     c = re.search(r'CAPE\s*(?:total)?\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
                     k = re.search(r'(?:\bKI\b|\bK\s*[-_]?Index\b)\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
                     l = re.search(r'(?:\bLI\b|\bLifted\s*[-_]?Index\b)\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
@@ -142,12 +156,13 @@ def fetch_rason_data(wmo):
                             "li": float(l.group(1)) if l else None,
                             "freeze": float(f.group(1)) if f else None,
                             "wind": float(w.group(1)) if w else None,
-                            "is_live": True
+                            "is_live": True,
+                            "debug_txt": ocr_debug_text
                         }
         except Exception:
             continue
             
-    return {"cape": None, "ki": None, "li": None, "freeze": None, "wind": None, "is_live": False}
+    return {"cape": None, "ki": None, "li": None, "freeze": None, "wind": None, "is_live": False, "debug_txt": ocr_debug_text}
 
 def fetch_image(wmo):
     urls = [
@@ -214,7 +229,7 @@ with c_sel1:
 
 row = df[df["name"] == station].iloc[0]
 
-# EKSTRAKSI DATA REAL-TIME BMKG SEBELUM MELAKUKAN ANALISIS
+# EKSTRAKSI DATA REAL-TIME BMKG
 rason_live = fetch_rason_data(row["wmo"])
 if rason_live["is_live"]:
     c_val = rason_live["cape"] if rason_live["cape"] is not None else row["cape"]
@@ -222,10 +237,10 @@ if rason_live["is_live"]:
     l_val = rason_live["li"] if rason_live["li"] is not None else row["li"]
     f_val = rason_live["freeze"] if rason_live["freeze"] is not None else row["freeze"]
     w_val = rason_live["wind"] if rason_live["wind"] is not None else row["wind"]
-    data_source_msg = f"🟢 **Real-Time Data Valid:** Diekstrak otomatis dari diagram visual analisis termodinamika BMKG (WMO {row['wmo']})."
+    data_source_msg = f"🟢 **Real-Time Data Valid:** Diekstrak dinamis via OCR dari Skew-T BMKG (WMO {row['wmo']})."
 else:
     c_val, k_val, l_val, f_val, w_val = row["cape"], row["ki"], row["li"], row["freeze"], row["wind"]
-    data_source_msg = f"🟠 **Peringatan Fallback:** Gagal mengekstrak teks dari grafik real-time LATEST_TEMP_{row['wmo']}.PNG dari server BMKG. (Menampilkan fallback database historis statis)."
+    data_source_msg = f"🟠 **Peringatan Fallback:** OCR gagal mendeteksi parameter dari grafik BMKG. (Menampilkan fallback statis)."
 
 # PROSES ANALISIS 
 status, color, thunder, turbulence, icing = analyze_weather(c_val, k_val, l_val, f_val, w_val)
@@ -251,7 +266,7 @@ with col_taf:
     st.markdown(f"<div class='metar-text'>{aviation_data['taf']}</div>", unsafe_allow_html=True)
 
 # =====================================================
-# INTEGRASI API PUBLIK BMKG (PENCARIAN PRESISI)
+# INTEGRASI API PUBLIK BMKG
 # =====================================================
 st.write("---")
 st.subheader("🌤️ Prakiraan Cuaca Publik BMKG (Presisi Wilayah)")
@@ -270,7 +285,6 @@ if not df_wilayah.empty:
     with c_cari1:
         selected_label = st.selectbox("📍 Pilih Wilayah Prakiraan BMKG:", df_wilayah['label'], index=default_index)
     selected_adm4 = selected_label.split("(")[-1].replace(")", "").strip()
-
 else:
     df['label_lanud'] = df['name'] + " (" + df['adm4'] + ")"
     default_index = df.index[df['name'] == station].tolist()[0]
@@ -317,9 +331,7 @@ else:
 # =====================================================
 st.write("---")
 st.subheader("☁️ Analisis Stabilitas Atmosfer (Radiosonde)")
-
-# Keterangan transparansi sumber data (Mencegah keraguan pada keakuratan angka)
-st.caption(f"📊 Sumber Data: {data_source_msg} Referensi repositori visual dapat dilihat di [BMKG Monitoring Radiosonde](https://aviation.bmkg.go.id/monitoring_rason/index).")
+st.caption(f"📊 Sumber Data: {data_source_msg}")
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("CAPE (Energi Konvektif)", f"{c_val} J/kg")
@@ -333,21 +345,52 @@ h1.markdown(f"<div class='block'><h3>⛈️ Thunderstorm</h3><h1>{thunder}</h1><
 h2.markdown(f"<div class='block'><h3>🌪️ Turbulence</h3><h1>{turbulence}</h1></div>", unsafe_allow_html=True)
 h3.markdown(f"<div class='block'><h3>❄️ Icing</h3><h1>{icing}</h1></div>", unsafe_allow_html=True)
 
+# PENGKONDISIAN TEKS DINAMIS
+if thunder == "TINGGI":
+    t_sebab = f"Nilai CAPE ekstrem ({c_val} J/kg) dipadukan dengan LI yang sangat labil ({l_val}). K-Index ({k_val}) menyuplai uap air melimpah."
+    t_akibat = "Sangat mendukung formasi masif awan Cumulonimbus (CB). Waspadai hujan lebat, kilat intens, dan potensi microburst."
+elif thunder == "SEDANG":
+    t_sebab = f"Meskipun CAPE tercatat {c_val} J/kg, K-Index ({k_val}) mengindikasikan adanya uap air yang cukup untuk memicu ketidakstabilan parsial."
+    t_akibat = "Memicu pertumbuhan awan konvektif tingkat sedang. Terdapat potensi badai petir terisolasi."
+else:
+    t_sebab = f"Nilai CAPE minim ({c_val} J/kg) dengan tingkat labilitas (LI {l_val}) yang tidak signifikan."
+    t_akibat = "Gaya angkat vertikal (updraft) gagal terbentuk. Atmosfer stabil, membatasi pertumbuhan awan vertikal."
+
+if turbulence == "TINGGI":
+    turb_sebab = f"Kecepatan angin lapisan atas terpantau sangat kuat di angka {w_val} kt."
+    turb_akibat = "Berpotensi memicu Wind Shear mekanis parah. Guncangan turbulensi dapat mengganggu kestabilan airframe."
+elif turbulence == "SEDANG":
+    turb_sebab = f"Angin lapisan atas terpantau berada di kecepatan moderat ({w_val} kt)."
+    turb_akibat = "Terdapat gangguan pada aliran laminar. Pesawat berpotensi mengalami guncangan tingkat sedang mendadak."
+else:
+    turb_sebab = f"Kecepatan angin lapisan atas tergolong terkendali ({w_val} kt)."
+    turb_akibat = "Aliran udara di jalur terbang cenderung laminar. Risiko wind shear dan turbulensi sangat minim."
+
+if icing == "TINGGI":
+    ice_sebab = f"Titik beku (Freezing level) turun drastis hingga elevasi {f_val} ft."
+    ice_akibat = "Risiko paparan supercooled water droplets sangat kritis. Tetesan air akan membeku saat menabrak tepian sayap (structural icing)."
+elif icing == "SEDANG":
+    ice_sebab = f"Freezing level merambah level menengah penerbangan operasional ({f_val} ft)."
+    ice_akibat = "Waspadai potensi icing moderat apabila beroperasi menembus sel awan tebal di sekitar elevasi tersebut."
+else:
+    ice_sebab = f"Freezing level berada di batas aman pada elevasi {f_val} ft."
+    ice_akibat = "Mayoritas penerbangan taktis di level rendah terlindungi. Risiko ancaman penumpukan es sangat rendah."
+
 st.info(f"""
 ### 💡 Interpretasi Taktis & Analisis Termodinamika
 **STATUS PERINGATAN UMUM: {status}**
 
 **1. Potensi Konvektif & Badai Petir (Kondisi: {thunder})**
-* **Penyebab Termodinamika:** Nilai **CAPE** (*Convective Available Potential Energy*) sebesar **{c_val} J/kg** mewakili besaran energi apung (buoyancy) parsial yang mengindikasikan tingkat labilitas massa udara. Disertai **Lifted Index (LI)** bernilai **{l_val}**, yang mengukur perbedaan suhu parsel udara yang diangkat terhadap lingkungan sekitarnya.
-* **Akibat Meteorologi:** Kondisi atmosfer yang labil membuat parsel udara terdorong ke atas dengan cepat (menghasilkan *updraft* yang kuat). Sementara itu, nilai **K-Index** sebesar **{k_val}** memvalidasi tingginya ketersediaan uap air di lapisan bawah hingga menengah. Kombinasi gaya angkat vertikal dan uap air ini memicu pertumbuhan masif awan vertikal, terutama **Cumulonimbus (CB)**, yang berpotensi menghasilkan hujan lebat dan kilat.
+* **Penyebab Termodinamika:** {t_sebab}
+* **Akibat Meteorologi:** {t_akibat}
 
 **2. Potensi Turbulensi Udara (Kondisi: {turbulence})**
-* **Penyebab Dinamika Udara:** Kecepatan angin lapisan atas (atau Proyeksi *Max Vertical Velocity*) terpantau di angka **{w_val} kt**. Kecepatan angin yang kuat pada lapisan ini umumnya memicu *Wind Shear* mekanis, yakni perubahan tajam kecepatan atau arah angin dalam jarak yang berdekatan.
-* **Akibat pada Penerbangan:** *Wind shear* merusak aliran udara laminar, menciptakan pusaran dan olakan (eddy) acak di sepanjang jalur terbang. Hal ini mengakibatkan pesawat mengalami guncangan (**turbulensi {turbulence.lower()}**) mendadak, yang sangat menuntut kewaspadaan awak kokpit demi keselamatan dan stabilitas badan pesawat (*airframe*).
+* **Penyebab Dinamika Udara:** {turb_sebab}
+* **Akibat pada Penerbangan:** {turb_akibat}
 
 **3. Potensi Pembentukan Es / Icing (Kondisi: {icing})**
-* **Penyebab Termodinamika:** *Freezing level* tercatat pada elevasi **{f_val} ft** (ketinggian dimana suhu udara ambien melintasi titik 0°C). Di atas ketinggian ini, butiran air awan tidak langsung membeku melainkan beralih menjadi air superdingin (*supercooled water droplets*).
-* **Akibat pada Penerbangan:** Ketika komponen eksterior pesawat terbang (terutama tepi depan sayap dan mesin) menembus wilayah *supercooled droplets* ini, tetesan tersebut akan membeku seketika sesaat setelah terjadi benturan. Risiko **icing {icing.lower()}** ini sangat berbahaya karena merusak profil aerodinamis sayap (mengurangi daya angkat/lift) dan secara signifikan menambah bobot beban pesawat.
+* **Penyebab Termodinamika:** {ice_sebab}
+* **Akibat pada Penerbangan:** {ice_akibat}
 """)
 
 # =====================================================
