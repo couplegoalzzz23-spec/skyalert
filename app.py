@@ -116,11 +116,9 @@ def fetch_rason_data(wmo):
     for url in urls:
         try:
             resp = requests.get(url, timeout=5)
-            # Pastikan teks yang ditarik berisi format RAOB
             if resp.status_code == 200 and ("CAPE" in resp.text or "RAOB" in resp.text):
                 txt = resp.text
                 
-                # Ekstraksi menggunakan RegEx (cocok dengan format BMKG/SHARPpy)
                 c = re.search(r'CAPE\s*(?:total)?\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
                 k = re.search(r'\bKI\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
                 l = re.search(r'\bLI\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
@@ -205,7 +203,7 @@ with c_sel1:
 
 row = df[df["name"] == station].iloc[0]
 
-# EKSTRAKSI DATA REAL-TIME BMKG SEBELUM MELAKUKAN ANALISIS
+# EKSTRAKSI DATA REAL-TIME BMKG
 rason_live = fetch_rason_data(row["wmo"])
 if rason_live["is_live"]:
     c_val = rason_live["cape"] if rason_live["cape"] is not None else row["cape"]
@@ -309,7 +307,6 @@ else:
 st.write("---")
 st.subheader("☁️ Analisis Stabilitas Atmosfer (Radiosonde)")
 
-# Keterangan transparansi sumber data (Mencegah keraguan pada keakuratan angka)
 st.caption(f"📊 Sumber Data: {data_source_msg} Referensi repositori visual dapat dilihat di [BMKG Monitoring Radiosonde](https://aviation.bmkg.go.id/monitoring_rason/index).")
 
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -324,21 +321,55 @@ h1.markdown(f"<div class='block'><h3>⛈️ Thunderstorm</h3><h1>{thunder}</h1><
 h2.markdown(f"<div class='block'><h3>🌪️ Turbulence</h3><h1>{turbulence}</h1></div>", unsafe_allow_html=True)
 h3.markdown(f"<div class='block'><h3>❄️ Icing</h3><h1>{icing}</h1></div>", unsafe_allow_html=True)
 
+# PENGKONDISIAN TEKS DINAMIS AGAR TIDAK SALING BERTABRAKAN
+# 1. Teks Thunderstorm
+if thunder == "TINGGI":
+    t_sebab = f"Nilai CAPE ekstrem ({c_val} J/kg) dipadukan dengan LI yang sangat labil ({l_val}). K-Index tinggi ({k_val}) menyuplai uap air melimpah."
+    t_akibat = "Kondisi sangat mendukung formasi masif awan Cumulonimbus (CB) tipe Supercell. Waspadai hujan lebat, kilat intens, dan potensi microburst yang sangat membahayakan fase lepas landas/pendaratan."
+elif thunder == "SEDANG":
+    t_sebab = f"Meskipun CAPE tercatat {c_val} J/kg, nilai K-Index ({k_val}) mengindikasikan adanya ketersediaan uap air di lapisan bawah hingga menengah yang cukup untuk memicu ketidakstabilan parsial."
+    t_akibat = "Memicu pertumbuhan awan konvektif tingkat sedang (kategori Ordinary/Multicells). Terdapat potensi badai petir terisolasi yang membutuhkan deviasi rute terbang taktis."
+else:
+    t_sebab = f"Nilai CAPE sangat minim ({c_val} J/kg) dengan tingkat labilitas (LI {l_val}) marginal."
+    t_akibat = "Gaya angkat vertikal (updraft) gagal terbentuk secara kuat. Atmosfer terpantau stabil, sangat membatasi dan menggagalkan pertumbuhan masif awan vertikal penyumbang badai petir."
+
+# 2. Teks Turbulensi
+if turbulence == "TINGGI":
+    turb_sebab = f"Kecepatan angin lapisan atas (atau proyeksi Maximum Vertical Velocity) terpantau sangat kuat di angka {w_val} kt."
+    turb_akibat = "Aliran udara berkecepatan tinggi ini berpotensi memicu Wind Shear mekanis parah dan pusaran (eddy) acak. Guncangan (turbulensi kuat) dapat merusak kestabilan airframe, sangat menuntut kewaspadaan penuh kokpit."
+elif turbulence == "SEDANG":
+    turb_sebab = f"Angin lapisan atas terpantau berada di kecepatan moderat ({w_val} kt)."
+    turb_akibat = "Terdapat gangguan pada aliran laminar di jalur terbang. Pesawat berpotensi mengalami guncangan tingkat sedang mendadak (Clear Air Turbulence parsial) yang memengaruhi kenyamanan dan akurasi manuver."
+else:
+    turb_sebab = f"Kecepatan angin lapisan atas tergolong tenang hingga terkendali ({w_val} kt)."
+    turb_akibat = "Aliran udara di sepanjang elevasi terbang cenderung laminar dan bersahabat. Risiko wind shear mematikan sangat minim, memungkinkan pergerakan armada udara secara stabil dan lancar."
+
+# 3. Teks Icing
+if icing == "TINGGI":
+    ice_sebab = f"Titik beku (Freezing level) anjlok hingga elevasi yang sangat rendah ({f_val} ft)."
+    ice_akibat = "Risiko paparan supercooled water droplets sangat kritis. Tetesan air akan membeku seketika menabrak tepian sayap (structural icing), menambah bobot ekstrem dan mengurangi daya angkat secara drastis."
+elif icing == "SEDANG":
+    ice_sebab = f"Freezing level tercatat merambah level menengah penerbangan operasional ({f_val} ft)."
+    ice_akibat = "Waspadai potensi icing moderat apabila terpaksa beroperasi masuk menembus ke dalam sel awan tebal di sekitar ketinggian tersebut."
+else:
+    ice_sebab = f"Freezing level bergeser aman jauh ke atas pada elevasi tinggi ({f_val} ft)."
+    ice_akibat = "Mayoritas penerbangan taktis di level rendah hingga menengah terlindungi dari zona supercooled droplets. Risiko ancaman penumpukan es pada eksterior pesawat secara umum sangat rendah/aman."
+
 st.info(f"""
 ### 💡 Interpretasi Taktis & Analisis Termodinamika
 **STATUS PERINGATAN UMUM: {status}**
 
 **1. Potensi Konvektif & Badai Petir (Kondisi: {thunder})**
-* **Penyebab Termodinamika:** Nilai **CAPE** (*Convective Available Potential Energy*) sebesar **{c_val} J/kg** mewakili besaran energi apung (buoyancy) parsial yang mengindikasikan tingkat labilitas massa udara. Disertai **Lifted Index (LI)** bernilai **{l_val}**, yang mengukur perbedaan suhu parsel udara yang diangkat terhadap lingkungan sekitarnya.
-* **Akibat Meteorologi:** Kondisi atmosfer yang labil membuat parsel udara terdorong ke atas dengan cepat (menghasilkan *updraft* yang kuat). Sementara itu, nilai **K-Index** sebesar **{k_val}** memvalidasi tingginya ketersediaan uap air di lapisan bawah hingga menengah. Kombinasi gaya angkat vertikal dan uap air ini memicu pertumbuhan masif awan vertikal, terutama **Cumulonimbus (CB)**, yang berpotensi menghasilkan hujan lebat dan kilat.
+* **Penyebab Termodinamika:** {t_sebab}
+* **Akibat Meteorologi:** {t_akibat}
 
 **2. Potensi Turbulensi Udara (Kondisi: {turbulence})**
-* **Penyebab Dinamika Udara:** Kecepatan angin lapisan atas (atau Proyeksi *Max Vertical Velocity*) terpantau di angka **{w_val} kt**. Kecepatan angin yang kuat pada lapisan ini umumnya memicu *Wind Shear* mekanis, yakni perubahan tajam kecepatan atau arah angin dalam jarak yang berdekatan.
-* **Akibat pada Penerbangan:** *Wind shear* merusak aliran udara laminar, menciptakan pusaran dan olakan (eddy) acak di sepanjang jalur terbang. Hal ini mengakibatkan pesawat mengalami guncangan (**turbulensi {turbulence.lower()}**) mendadak, yang sangat menuntut kewaspadaan awak kokpit demi keselamatan dan stabilitas badan pesawat (*airframe*).
+* **Penyebab Dinamika Udara:** {turb_sebab}
+* **Akibat pada Penerbangan:** {turb_akibat}
 
 **3. Potensi Pembentukan Es / Icing (Kondisi: {icing})**
-* **Penyebab Termodinamika:** *Freezing level* tercatat pada elevasi **{f_val} ft** (ketinggian dimana suhu udara ambien melintasi titik 0°C). Di atas ketinggian ini, butiran air awan tidak langsung membeku melainkan beralih menjadi air superdingin (*supercooled water droplets*).
-* **Akibat pada Penerbangan:** Ketika komponen eksterior pesawat terbang (terutama tepi depan sayap dan mesin) menembus wilayah *supercooled droplets* ini, tetesan tersebut akan membeku seketika sesaat setelah terjadi benturan. Risiko **icing {icing.lower()}** ini sangat berbahaya karena merusak profil aerodinamis sayap (mengurangi daya angkat/lift) dan secara signifikan menambah bobot beban pesawat.
+* **Penyebab Termodinamika:** {ice_sebab}
+* **Akibat pada Penerbangan:** {ice_akibat}
 """)
 
 # =====================================================
