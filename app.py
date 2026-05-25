@@ -20,7 +20,7 @@ st.set_page_config(
 st.markdown("""
 <style>
     .stApp { background:#06101a; color:white; }
-    section[data-testid="stSidebar"] { background:#0d1826; }
+    section[data-testid=\"stSidebar\"] { background:#0d1826; }
     .block { background:#132433; padding:18px; border-radius:14px; margin-bottom:15px; }
     .alert-normal { background:#0d402c; padding:18px; border-radius:14px; font-size:24px; font-weight:bold; color:white; text-align:center; }
     .alert-siaga { background:#7a5a00; padding:18px; border-radius:14px; font-size:24px; font-weight:bold; color:white; text-align:center; }
@@ -104,38 +104,47 @@ def fetch_bmkg_public_weather(adm4_code):
 
 @st.cache_data(ttl=300)
 def fetch_rason_data(wmo):
-    """Menarik dan mengekstrak data teks real-time aktual parameter udara atas BMKG"""
+    """Menarik gambar PNG Skew-T secara langsung dan mengekstrak metrik numerik indeks menggunakan OCR secara aman"""
     urls = [
-        f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.TXT",
-        f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.txt",
-        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.TXT",
-        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.txt",
-        f"https://aviation.bmkg.go.id/monitoring_rason/data/LATEST_TEMP_{wmo}.TXT"
+        f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.PNG",
+        f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.png",
+        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.PNG",
+        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.png",
     ]
     
     for url in urls:
         try:
-            resp = requests.get(url, timeout=5)
-            # Pastikan teks yang ditarik berisi format RAOB
-            if resp.status_code == 200 and ("CAPE" in resp.text or "RAOB" in resp.text):
-                txt = resp.text
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                img = Image.open(BytesIO(resp.content))
                 
-                # Ekstraksi menggunakan RegEx (cocok dengan format BMKG/SHARPpy)
-                c = re.search(r'CAPE\s*(?:total)?\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
-                k = re.search(r'\bKI\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
-                l = re.search(r'\bLI\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
-                f = re.search(r'(?:FRZG\s*Lvl|Freezing\s*Level)\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
-                w = re.search(r'(?:MVV|Max\s*Wind)\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
+                # Ekstraksi teks dari gambar (OCR) dengan proteksi error modul terpisah
+                try:
+                    import pytesseract
+                    # Catatan Opsional: Jika berjalan di Windows lokal, arahkan path binary-nya di sini jika diperlukan:
+                    # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+                    txt = pytesseract.image_to_string(img)
+                except Exception:
+                    txt = ""
                 
-                return {
-                    "cape": float(c.group(1)) if c else None,
-                    "ki": float(k.group(1)) if k else None,
-                    "li": float(l.group(1)) if l else None,
-                    "freeze": float(f.group(1)) if f else None,
-                    "wind": float(w.group(1)) if w else None,
-                    "is_live": True
-                }
-        except:
+                if txt.strip():
+                    # RegEx Fleksibel tinggi untuk memetakan indeks pada gambar keluaran SHARPpy milik BMKG
+                    c = re.search(r'CAPE\s*(?:total)?\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
+                    k = re.search(r'(?:\bKI\b|\bK\s*[-_]?Index\b)\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
+                    l = re.search(r'(?:\bLI\b|\bLifted\s*[-_]?Index\b)\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
+                    f = re.search(r'(?:FRZG\s*Lvl|Freezing\s*Level|Freezing)\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
+                    w = re.search(r'(?:MVV|Max\s*Wind|Upper\s*Wind)\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
+                    
+                    if c or k or l:
+                        return {
+                            "cape": float(c.group(1)) if c else None,
+                            "ki": float(k.group(1)) if k else None,
+                            "li": float(l.group(1)) if l else None,
+                            "freeze": float(f.group(1)) if f else None,
+                            "wind": float(w.group(1)) if w else None,
+                            "is_live": True
+                        }
+        except Exception:
             continue
             
     return {"cape": None, "ki": None, "li": None, "freeze": None, "wind": None, "is_live": False}
@@ -213,10 +222,10 @@ if rason_live["is_live"]:
     l_val = rason_live["li"] if rason_live["li"] is not None else row["li"]
     f_val = rason_live["freeze"] if rason_live["freeze"] is not None else row["freeze"]
     w_val = rason_live["wind"] if rason_live["wind"] is not None else row["wind"]
-    data_source_msg = f"🟢 **Real-Time Data Valid:** Diekstrak langsung dari teks log parameter BMKG (WMO {row['wmo']})."
+    data_source_msg = f"🟢 **Real-Time Data Valid:** Diekstrak otomatis dari diagram visual analisis termodinamika BMKG (WMO {row['wmo']})."
 else:
     c_val, k_val, l_val, f_val, w_val = row["cape"], row["ki"], row["li"], row["freeze"], row["wind"]
-    data_source_msg = f"🟠 **Peringatan Fallback:** Gagal mengekstrak log real-time LATEST_TEMP_{row['wmo']}.TXT dari server BMKG. (Menampilkan fallback database historis statis)."
+    data_source_msg = f"🟠 **Peringatan Fallback:** Gagal mengekstrak teks dari grafik real-time LATEST_TEMP_{row['wmo']}.PNG dari server BMKG. (Menampilkan fallback database historis statis)."
 
 # PROSES ANALISIS 
 status, color, thunder, turbulence, icing = analyze_weather(c_val, k_val, l_val, f_val, w_val)
