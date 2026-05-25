@@ -253,6 +253,9 @@ else:
 # =====================================================
 st.write("---")
 st.subheader("☁️ Analisis Stabilitas Atmosfer (Radiosonde)")
+# Menambahkan takarir/caption asal muasal instrumen data agar user tidak menduga-duga
+st.caption(f"📊 Sumber Data: Hasil ekstraksi parameter fisis profil sounding udara atas stasiun udara WMO {row['wmo']} melalui jaringan [BMKG Monitoring Radiosonde](https://aviation.bmkg.go.id/monitoring_rason/index).")
+
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("CAPE (Energi Konvektif)", f"{row['cape']} J/kg")
 c2.metric("K-Index", row["ki"])
@@ -265,11 +268,11 @@ h1.markdown(f"<div class='block'><h3>⛈️ Thunderstorm</h3><h1>{thunder}</h1><
 h2.markdown(f"<div class='block'><h3>🌪️ Turbulence</h3><h1>{turbulence}</h1></div>", unsafe_allow_html=True)
 h3.markdown(f"<div class='block'><h3>❄️ Icing</h3><h1>{icing}</h1></div>", unsafe_allow_html=True)
 
-# ---> BAGIAN YANG DIREVISI <---
-# Mengubah string st.info agar lebih mengedukasi alur meteorologi dan termodinamikanya.
 st.info(f"""
 ### 💡 Interpretasi Taktis & Analisis Termodinamika
 **STATUS PERINGATAN UMUM: {status}**
+
+*🔍 **Transparansi & Validitas Data:** Seluruh indeks stabilitas dan parameter termodinamika di atas dihitung dan diekstraksi secara langsung dari grafik **Skew-T Log-P** berbasis peluncuran balon cuaca aktual stasiun rason ini. Data divalidasi silang menggunakan basis data resmi [BMKG Rason Portal](https://aviation.bmkg.go.id/monitoring_rason/index).*
 
 **1. Potensi Konvektif & Badai Petir (Kondisi: {thunder})**
 * **Penyebab Termodinamika:** Nilai **CAPE** (*Convective Available Potential Energy*) sebesar **{row['cape']} J/kg** mewakili besaran energi apung (buoyancy) parsial yang mengindikasikan tingkat labilitas massa udara. Disertai **Lifted Index (LI)** bernilai **{row['li']}**, yang mengukur perbedaan suhu parsel udara yang diangkat terhadap lingkungan sekitarnya.
@@ -283,7 +286,6 @@ st.info(f"""
 * **Penyebab Termodinamika:** *Freezing level* tercatat pada elevasi **{row['freeze']} ft** (ketinggian dimana suhu udara ambien melintasi titik 0°C). Di atas ketinggian ini, butiran air awan tidak langsung membeku melainkan beralih menjadi air superdingin (*supercooled water droplets*).
 * **Akibat pada Penerbangan:** Ketika komponen eksterior pesawat terbang (terutama tepi depan sayap dan mesin) menembus wilayah *supercooled droplets* ini, tetesan tersebut akan membeku seketika sesaat setelah terjadi benturan. Risiko **icing {icing.lower()}** ini sangat berbahaya karena merusak profil aerodinamis sayap (mengurangi daya angkat/lift) dan secara signifikan menambah bobot beban pesawat.
 """)
-# ---> AKHIR BAGIAN YANG DIREVISI <---
 
 # =====================================================
 # RADAR & SATELLITE
@@ -300,7 +302,7 @@ st.write("---")
 st.subheader("📈 Profil Radiosonde (Skew-T Log-P)")
 img, img_timestamp = fetch_image(row["wmo"])
 if img:
-    st.caption(f"Server BMKG Last-Modified: {img_timestamp}")
+    st.caption(f"Visualisasi diagram termodinamika mentah yang diunggah oleh server repositori [BMKG Upper Air Portal](https://aviation.bmkg.go.id/monitoring_rason/). Last-Modified: {img_timestamp}")
     st.image(img, use_container_width=True)
 else:
     st.warning("⚠️ BMKG belum mempublikasikan visualisasi sounding terbaru untuk stasiun ini atau server sedang down.")
