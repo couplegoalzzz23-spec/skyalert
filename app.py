@@ -265,10 +265,25 @@ h1.markdown(f"<div class='block'><h3>⛈️ Thunderstorm</h3><h1>{thunder}</h1><
 h2.markdown(f"<div class='block'><h3>🌪️ Turbulence</h3><h1>{turbulence}</h1></div>", unsafe_allow_html=True)
 h3.markdown(f"<div class='block'><h3>❄️ Icing</h3><h1>{icing}</h1></div>", unsafe_allow_html=True)
 
+# ---> BAGIAN YANG DIREVISI <---
+# Mengubah string st.info agar lebih mengedukasi alur meteorologi dan termodinamikanya.
 st.info(f"""
-### 💡 Interpretasi Taktis
-Data observasi menunjukkan kondisi konveksi **{thunder.lower()}**. Nilai CAPE ({row['cape']} J/kg) dan LI ({row['li']}) mengindikasikan tingkat labilitas udara saat ini. K-Index ({row['ki']}) merepresentasikan probabilitas pertumbuhan awan Cumulonimbus (CB). Kecepatan angin atas ({row['wind']} kt) memicu potensi turbulensi **{turbulence.lower()}**. Waspadai freezing level pada ketinggian {row['freeze']} ft untuk risiko icing **{icing.lower()}**.
+### 💡 Interpretasi Taktis & Analisis Termodinamika
+**STATUS PERINGATAN UMUM: {status}**
+
+**1. Potensi Konvektif & Badai Petir (Kondisi: {thunder})**
+* **Penyebab Termodinamika:** Nilai **CAPE** (*Convective Available Potential Energy*) sebesar **{row['cape']} J/kg** mewakili besaran energi apung (buoyancy) parsial yang mengindikasikan tingkat labilitas massa udara. Disertai **Lifted Index (LI)** bernilai **{row['li']}**, yang mengukur perbedaan suhu parsel udara yang diangkat terhadap lingkungan sekitarnya.
+* **Akibat Meteorologi:** Kondisi atmosfer yang labil membuat parsel udara terdorong ke atas dengan cepat (menghasilkan *updraft* yang kuat). Sementara itu, nilai **K-Index** sebesar **{row['ki']}** memvalidasi tingginya ketersediaan uap air di lapisan bawah hingga menengah. Kombinasi gaya angkat vertikal dan uap air ini memicu pertumbuhan masif awan vertikal, terutama **Cumulonimbus (CB)**, yang berpotensi menghasilkan hujan lebat dan kilat.
+
+**2. Potensi Turbulensi Udara (Kondisi: {turbulence})**
+* **Penyebab Dinamika Udara:** Kecepatan angin lapisan atas terpantau di angka **{row['wind']} kt**. Kecepatan angin yang kuat pada lapisan ini umumnya memicu *Wind Shear* mekanis, yakni perubahan tajam kecepatan atau arah angin dalam jarak yang berdekatan.
+* **Akibat pada Penerbangan:** *Wind shear* merusak aliran udara laminar, menciptakan pusaran dan olakan (eddy) acak di sepanjang jalur terbang. Hal ini mengakibatkan pesawat mengalami guncangan (**turbulensi {turbulence.lower()}**) mendadak, yang sangat menuntut kewaspadaan awak kokpit demi keselamatan dan stabilitas badan pesawat (*airframe*).
+
+**3. Potensi Pembentukan Es / Icing (Kondisi: {icing})**
+* **Penyebab Termodinamika:** *Freezing level* tercatat pada elevasi **{row['freeze']} ft** (ketinggian dimana suhu udara ambien melintasi titik 0°C). Di atas ketinggian ini, butiran air awan tidak langsung membeku melainkan beralih menjadi air superdingin (*supercooled water droplets*).
+* **Akibat pada Penerbangan:** Ketika komponen eksterior pesawat terbang (terutama tepi depan sayap dan mesin) menembus wilayah *supercooled droplets* ini, tetesan tersebut akan membeku seketika sesaat setelah terjadi benturan. Risiko **icing {icing.lower()}** ini sangat berbahaya karena merusak profil aerodinamis sayap (mengurangi daya angkat/lift) dan secara signifikan menambah bobot beban pesawat.
 """)
+# ---> AKHIR BAGIAN YANG DIREVISI <---
 
 # =====================================================
 # RADAR & SATELLITE
