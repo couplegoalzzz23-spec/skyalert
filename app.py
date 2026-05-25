@@ -3,14 +3,10 @@ import pandas as pd
 import requests
 import os
 import re
-import urllib3
 from io import StringIO, BytesIO
 from PIL import Image
 from datetime import datetime, timezone
 import streamlit.components.v1 as components
-
-# Matikan peringatan SSL (Sering bermasalah di web pemerintah)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =====================================================
 # CONFIG & STYLE
@@ -34,14 +30,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# HEADER BROWSER SUPER LENGKAP (Menyamar sebagai browser asli)
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Connection': 'keep-alive'
-}
-
 # =====================================================
 # STATION DATA & KODE WILAYAH LOADER
 # =====================================================
@@ -63,10 +51,11 @@ WAPP,97724,Pattimura,-3.710,128.089,680,35,-2,17000,30,81.71.02.1001
 WAJJ,97690,Sentani,-2.576,140.516,1100,39,-4,14500,42,91.03.01.2001
 """
 
+@st.cache_data
 def load_data():
     return pd.read_csv(StringIO(CSV_DATA.strip()))
 
-@st.cache_data(ttl=3600)
+@st.cache_data
 def load_wilayah_data():
     file_path = "kode_wilayah (1).csv"
     if os.path.exists(file_path):
@@ -89,11 +78,11 @@ df = load_data()
 def fetch_metar_taf(icao):
     data = {"metar": "Data tidak tersedia", "taf": "Data tidak tersedia"}
     try:
-        req_metar = requests.get(f"https://aviationweather.gov/api/data/metar?ids={icao}&format=raw", headers=HEADERS, timeout=5, verify=False)
+        req_metar = requests.get(f"https://aviationweather.gov/api/data/metar?ids={icao}&format=raw", timeout=5)
         if req_metar.status_code == 200 and req_metar.text.strip():
             data["metar"] = req_metar.text.strip()
             
-        req_taf = requests.get(f"https://aviationweather.gov/api/data/taf?ids={icao}&format=raw", headers=HEADERS, timeout=5, verify=False)
+        req_taf = requests.get(f"https://aviationweather.gov/api/data/taf?ids={icao}&format=raw", timeout=5)
         if req_taf.status_code == 200 and req_taf.text.strip():
             data["taf"] = req_taf.text.strip()
     except Exception:
@@ -106,67 +95,62 @@ def fetch_bmkg_public_weather(adm4_code):
         adm4_code = "31.71.03.1001" 
     url = f"https://api.bmkg.go.id/publik/prakiraan-cuaca?adm4={str(adm4_code).strip()}"
     try:
-        response = requests.get(url, headers=HEADERS, timeout=8, verify=False)
+        response = requests.get(url, timeout=8)
         if response.status_code == 200:
             return response.json()
     except Exception:
         pass
     return None
 
-# FUNGSI INI DIBUANG CACHE-NYA AGAR MEMAKSA TARIK DATA BARU TERUS & ADA DEBUGGING
+@st.cache_data(ttl=300)
 def fetch_rason_data(wmo):
+    """Menarik dan mengekstrak data teks real-time aktual parameter udara atas BMKG"""
     urls = [
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.TXT",
-        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.TXT",
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.txt",
+        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.TXT",
+        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.txt",
         f"https://aviation.bmkg.go.id/monitoring_rason/data/LATEST_TEMP_{wmo}.TXT"
     ]
     
-    debug_info = "Memulai penarikan...\n"
-    
     for url in urls:
         try:
-            debug_info += f"Mencoba URL: {url}\n"
-            resp = requests.get(url, headers=HEADERS, timeout=10, verify=False)
-            
-            if resp.status_code == 200:
+            resp = requests.get(url, timeout=5)
+            # Pastikan teks yang ditarik berisi format RAOB
+            if resp.status_code == 200 and ("CAPE" in resp.text or "RAOB" in resp.text):
                 txt = resp.text
-                if "CAPE" in txt or "RAOB" in txt or "Station" in txt:
-                    c = re.search(r'CAPE\s*(?:total)?\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
-                    k = re.search(r'\bKI\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
-                    l = re.search(r'\bLI\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
-                    f = re.search(r'(?:FRZG\s*Lvl|Freezing\s*Level)\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
-                    w = re.search(r'(?:MVV|Max\s*Wind)\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
-                    
-                    return {
-                        "cape": float(c.group(1)) if c else None,
-                        "ki": float(k.group(1)) if k else None,
-                        "li": float(l.group(1)) if l else None,
-                        "freeze": float(f.group(1)) if f else None,
-                        "wind": float(w.group(1)) if w else None,
-                        "is_live": True,
-                        "debug": "Sukses"
-                    }
-                else:
-                    debug_info += "Status 200 OK, tapi teks 'CAPE' tidak ditemukan di dalam respons BMKG.\n"
-                    debug_info += f"Cuplikan Teks yang didapat: {txt[:200]}\n\n"
-            else:
-                debug_info += f"Gagal. Status Code: {resp.status_code}\n"
-        except Exception as e:
-            debug_info += f"Error: {str(e)}\n"
+                
+                # Ekstraksi menggunakan RegEx (cocok dengan format BMKG/SHARPpy)
+                c = re.search(r'CAPE\s*(?:total)?\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
+                k = re.search(r'\bKI\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
+                l = re.search(r'\bLI\s*[:=]\s*([-\d\.]+)', txt, re.IGNORECASE)
+                f = re.search(r'(?:FRZG\s*Lvl|Freezing\s*Level)\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
+                w = re.search(r'(?:MVV|Max\s*Wind)\s*[:=]\s*([\d\.]+)', txt, re.IGNORECASE)
+                
+                return {
+                    "cape": float(c.group(1)) if c else None,
+                    "ki": float(k.group(1)) if k else None,
+                    "li": float(l.group(1)) if l else None,
+                    "freeze": float(f.group(1)) if f else None,
+                    "wind": float(w.group(1)) if w else None,
+                    "is_live": True
+                }
+        except:
+            continue
             
-    return {"cape": None, "ki": None, "li": None, "freeze": None, "wind": None, "is_live": False, "debug": debug_info}
+    return {"cape": None, "ki": None, "li": None, "freeze": None, "wind": None, "is_live": False}
 
-@st.cache_data(ttl=300)
 def fetch_image(wmo):
     urls = [
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.PNG",
         f"https://aviation.bmkg.go.id/monitoring_rason/LATEST_TEMP_{wmo}.png",
+        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.PNG",
+        f"https://aviation.bmkg.go.id/monitoring_rason/latest_temp_{wmo}.png",
     ]
     timestamp = "Timestamp tidak diketahui"
     for url in urls:
         try:
-            r = requests.get(url, headers=HEADERS, timeout=10, verify=False)
+            r = requests.get(url, timeout=10)
             if r.status_code == 200 and len(r.content) > 1000:
                 timestamp = r.headers.get('Last-Modified', timestamp)
                 try:
@@ -221,19 +205,18 @@ with c_sel1:
 
 row = df[df["name"] == station].iloc[0]
 
-# EKSTRAKSI DATA REAL-TIME BMKG DENGAN DETEKSI ERROR BARU
+# EKSTRAKSI DATA REAL-TIME BMKG SEBELUM MELAKUKAN ANALISIS
 rason_live = fetch_rason_data(row["wmo"])
-
 if rason_live["is_live"]:
     c_val = rason_live["cape"] if rason_live["cape"] is not None else row["cape"]
     k_val = rason_live["ki"] if rason_live["ki"] is not None else row["ki"]
     l_val = rason_live["li"] if rason_live["li"] is not None else row["li"]
     f_val = rason_live["freeze"] if rason_live["freeze"] is not None else row["freeze"]
     w_val = rason_live["wind"] if rason_live["wind"] is not None else row["wind"]
-    data_source_msg = f"🟢 **Real-Time Data Valid:** Diekstrak langsung dari log parameter BMKG (WMO {row['wmo']})."
+    data_source_msg = f"🟢 **Real-Time Data Valid:** Diekstrak langsung dari teks log parameter BMKG (WMO {row['wmo']})."
 else:
     c_val, k_val, l_val, f_val, w_val = row["cape"], row["ki"], row["li"], row["freeze"], row["wind"]
-    data_source_msg = f"🟠 **Peringatan Fallback:** Gagal mengekstrak log real-time LATEST_TEMP. Menampilkan data fallback."
+    data_source_msg = f"🟠 **Peringatan Fallback:** Gagal mengekstrak log real-time LATEST_TEMP_{row['wmo']}.TXT dari server BMKG. (Menampilkan fallback database historis statis)."
 
 # PROSES ANALISIS 
 status, color, thunder, turbulence, icing = analyze_weather(c_val, k_val, l_val, f_val, w_val)
@@ -278,6 +261,7 @@ if not df_wilayah.empty:
     with c_cari1:
         selected_label = st.selectbox("📍 Pilih Wilayah Prakiraan BMKG:", df_wilayah['label'], index=default_index)
     selected_adm4 = selected_label.split("(")[-1].replace(")", "").strip()
+
 else:
     df['label_lanud'] = df['name'] + " (" + df['adm4'] + ")"
     default_index = df.index[df['name'] == station].tolist()[0]
@@ -324,13 +308,9 @@ else:
 # =====================================================
 st.write("---")
 st.subheader("☁️ Analisis Stabilitas Atmosfer (Radiosonde)")
-st.caption(f"📊 Sumber Data: {data_source_msg}")
 
-# KOTAK DEBUGGING (Akan muncul jika fallback menyala)
-if not rason_live["is_live"]:
-    with st.expander("🛠️ LIHAT ERROR LOG SERVER BMKG (Klik di sini)"):
-        st.text(rason_live["debug"])
-        st.warning("Jika terbaca 'Status 403', artinya IP Anda diblokir oleh sistem anti-DDoS BMKG. Jika terbaca 'Timeout', server BMKG sedang down.")
+# Keterangan transparansi sumber data (Mencegah keraguan pada keakuratan angka)
+st.caption(f"📊 Sumber Data: {data_source_msg} Referensi repositori visual dapat dilihat di [BMKG Monitoring Radiosonde](https://aviation.bmkg.go.id/monitoring_rason/index).")
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("CAPE (Energi Konvektif)", f"{c_val} J/kg")
@@ -344,52 +324,21 @@ h1.markdown(f"<div class='block'><h3>⛈️ Thunderstorm</h3><h1>{thunder}</h1><
 h2.markdown(f"<div class='block'><h3>🌪️ Turbulence</h3><h1>{turbulence}</h1></div>", unsafe_allow_html=True)
 h3.markdown(f"<div class='block'><h3>❄️ Icing</h3><h1>{icing}</h1></div>", unsafe_allow_html=True)
 
-# PENGKONDISIAN TEKS DINAMIS 
-if thunder == "TINGGI":
-    t_sebab = f"Nilai CAPE ekstrem ({c_val} J/kg) dipadukan dengan LI yang sangat labil ({l_val}). K-Index ({k_val}) menyuplai uap air melimpah."
-    t_akibat = "Sangat mendukung formasi masif awan Cumulonimbus (CB). Waspadai hujan lebat, kilat intens, dan potensi microburst."
-elif thunder == "SEDANG":
-    t_sebab = f"Meskipun CAPE tercatat {c_val} J/kg, K-Index ({k_val}) mengindikasikan adanya uap air yang cukup untuk memicu ketidakstabilan parsial."
-    t_akibat = "Memicu pertumbuhan awan konvektif tingkat sedang. Terdapat potensi badai petir terisolasi."
-else:
-    t_sebab = f"Nilai CAPE minim ({c_val} J/kg) dengan tingkat labilitas (LI {l_val}) yang tidak signifikan."
-    t_akibat = "Gaya angkat vertikal (updraft) gagal terbentuk. Atmosfer stabil, membatasi pertumbuhan awan vertikal."
-
-if turbulence == "TINGGI":
-    turb_sebab = f"Kecepatan angin lapisan atas terpantau sangat kuat di angka {w_val} kt."
-    turb_akibat = "Berpotensi memicu Wind Shear mekanis parah. Guncangan turbulensi dapat mengganggu kestabilan airframe."
-elif turbulence == "SEDANG":
-    turb_sebab = f"Angin lapisan atas terpantau berada di kecepatan moderat ({w_val} kt)."
-    turb_akibat = "Terdapat gangguan pada aliran laminar. Pesawat berpotensi mengalami guncangan tingkat sedang mendadak."
-else:
-    turb_sebab = f"Kecepatan angin lapisan atas tergolong terkendali ({w_val} kt)."
-    turb_akibat = "Aliran udara di jalur terbang cenderung laminar. Risiko wind shear dan turbulensi sangat minim."
-
-if icing == "TINGGI":
-    ice_sebab = f"Titik beku (Freezing level) turun drastis hingga elevasi {f_val} ft."
-    ice_akibat = "Risiko paparan supercooled water droplets sangat kritis. Tetesan air akan membeku saat menabrak tepian sayap (structural icing)."
-elif icing == "SEDANG":
-    ice_sebab = f"Freezing level merambah level menengah penerbangan operasional ({f_val} ft)."
-    ice_akibat = "Waspadai potensi icing moderat apabila beroperasi menembus sel awan tebal di sekitar elevasi tersebut."
-else:
-    ice_sebab = f"Freezing level berada di batas aman pada elevasi {f_val} ft."
-    ice_akibat = "Mayoritas penerbangan taktis di level rendah terlindungi. Risiko ancaman penumpukan es sangat rendah."
-
 st.info(f"""
 ### 💡 Interpretasi Taktis & Analisis Termodinamika
 **STATUS PERINGATAN UMUM: {status}**
 
 **1. Potensi Konvektif & Badai Petir (Kondisi: {thunder})**
-* **Penyebab Termodinamika:** {t_sebab}
-* **Akibat Meteorologi:** {t_akibat}
+* **Penyebab Termodinamika:** Nilai **CAPE** (*Convective Available Potential Energy*) sebesar **{c_val} J/kg** mewakili besaran energi apung (buoyancy) parsial yang mengindikasikan tingkat labilitas massa udara. Disertai **Lifted Index (LI)** bernilai **{l_val}**, yang mengukur perbedaan suhu parsel udara yang diangkat terhadap lingkungan sekitarnya.
+* **Akibat Meteorologi:** Kondisi atmosfer yang labil membuat parsel udara terdorong ke atas dengan cepat (menghasilkan *updraft* yang kuat). Sementara itu, nilai **K-Index** sebesar **{k_val}** memvalidasi tingginya ketersediaan uap air di lapisan bawah hingga menengah. Kombinasi gaya angkat vertikal dan uap air ini memicu pertumbuhan masif awan vertikal, terutama **Cumulonimbus (CB)**, yang berpotensi menghasilkan hujan lebat dan kilat.
 
 **2. Potensi Turbulensi Udara (Kondisi: {turbulence})**
-* **Penyebab Dinamika Udara:** {turb_sebab}
-* **Akibat pada Penerbangan:** {turb_akibat}
+* **Penyebab Dinamika Udara:** Kecepatan angin lapisan atas (atau Proyeksi *Max Vertical Velocity*) terpantau di angka **{w_val} kt**. Kecepatan angin yang kuat pada lapisan ini umumnya memicu *Wind Shear* mekanis, yakni perubahan tajam kecepatan atau arah angin dalam jarak yang berdekatan.
+* **Akibat pada Penerbangan:** *Wind shear* merusak aliran udara laminar, menciptakan pusaran dan olakan (eddy) acak di sepanjang jalur terbang. Hal ini mengakibatkan pesawat mengalami guncangan (**turbulensi {turbulence.lower()}**) mendadak, yang sangat menuntut kewaspadaan awak kokpit demi keselamatan dan stabilitas badan pesawat (*airframe*).
 
 **3. Potensi Pembentukan Es / Icing (Kondisi: {icing})**
-* **Penyebab Termodinamika:** {ice_sebab}
-* **Akibat pada Penerbangan:** {ice_akibat}
+* **Penyebab Termodinamika:** *Freezing level* tercatat pada elevasi **{f_val} ft** (ketinggian dimana suhu udara ambien melintasi titik 0°C). Di atas ketinggian ini, butiran air awan tidak langsung membeku melainkan beralih menjadi air superdingin (*supercooled water droplets*).
+* **Akibat pada Penerbangan:** Ketika komponen eksterior pesawat terbang (terutama tepi depan sayap dan mesin) menembus wilayah *supercooled droplets* ini, tetesan tersebut akan membeku seketika sesaat setelah terjadi benturan. Risiko **icing {icing.lower()}** ini sangat berbahaya karena merusak profil aerodinamis sayap (mengurangi daya angkat/lift) dan secara signifikan menambah bobot beban pesawat.
 """)
 
 # =====================================================
